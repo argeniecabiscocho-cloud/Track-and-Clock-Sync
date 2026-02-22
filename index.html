@@ -13,7 +13,7 @@
     'https://www.gstatic.com/firebasejs/'+FBVER+'/firebase-app-compat.js',
     'https://www.gstatic.com/firebasejs/'+FBVER+'/firebase-auth-compat.js',
     'https://www.gstatic.com/firebasejs/'+FBVER+'/firebase-firestore-compat.js',
-    'https://www.gstatic.com/firebasejs/'+FBVER+'/firebase-storage-compat.js',
+    // firebase-storage removed — using Firestore base64 storage instead
     'https://accounts.google.com/gsi/client'
   ];
   let i=0;
@@ -2628,7 +2628,7 @@ function _initFirebase(){
     if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
     auth=firebase.auth();
     db=firebase.firestore();
-    storage=firebase.storage();
+    storage=null; // Firebase Storage not used — files stored as base64 in Firestore
     firebaseReady=true;
     console.log('[Firebase] Connected ✅');
     // Sign in anonymously so every visitor passes Firestore security rules
@@ -2847,15 +2847,31 @@ function startSync(){
   }).catch(()=>{ renderGroupTabs(); });
 
   // ── library metadata (real-time) ──
-  _unsubs.push(fsColl('library').onSnapshot(snap=>{
-    libFiles=[];
+  _unsubs.push(fsColl('library').onSnapshot(async snap=>{
+    const uploading = libFiles.filter(f => f._uploading);
+    const incoming = [];
+    const chunkPromises = [];
     snap.forEach(doc=>{
-      const m=doc.data();
-      libFiles.push({id:m.id,name:m.name,type:m.type,mime:m.mime,
-        size:m.size,bytes:m.bytes||0,date:m.date,data:m.cloudUrl||'',cloudUrl:m.cloudUrl||''});
+      const m = doc.data();
+      if(!m.id) return;
+      const fobj = {
+        id:m.id, name:m.name||'Untitled', type:m.type||'file', mime:m.mime||'',
+        size:m.size||'—', bytes:m.bytes||0, date:m.date||'',
+        data:m.data||m.cloudUrl||'', cloudUrl:m.cloudUrl||'',
+        chunked:!!m.chunked, chunkCount:m.chunkCount||0
+      };
+      incoming.push(fobj);
+      if(m.chunked && m.chunkCount > 0 && !fobj.data){
+        chunkPromises.push(
+          _loadChunkedLib(m.id).then(b64=>{ fobj.data=b64; }).catch(()=>{})
+        );
+      }
     });
-    renderLib(); updateLibStorageBar();
-  },e=>console.warn('library listener:',e)));
+    if(chunkPromises.length > 0) await Promise.all(chunkPromises);
+    libFiles = incoming;
+    uploading.forEach(f=>{ if(!libFiles.find(x=>x.id===f.id)) libFiles.push(f); });
+    renderLib(); updateLibStorageBar(); setSyncBadge('synced');
+  },e=>{ console.warn('library listener:',e); setSyncBadge('offline'); }));
 }
 
 // ── sync badge in top bar ──
@@ -4359,55 +4375,129 @@ function togglePrivate(){document.getElementById('overallScore').textContent=doc
 // ===== LIBRARY =====
 let libFiles=[],libFilter='all',lastDeleted=null,undoTimer=null;
 function switchLibTab(filter,btn){libFilter=filter;document.querySelectorAll('.lib-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');renderLib();}
-function handleLibUpload(e){
-  const curBytes=libFiles.reduce((s,f)=>s+(f.bytes||0),0);
-  const maxB=typeof _libMaxBytes!=='undefined'?_libMaxBytes:1073741824;
-  Array.from(e.target.files).forEach(file=>{
-    if(curBytes+file.size>maxB){showToast('⚠️ Storage limit reached! Upgrade to Pro for more.',3000);return;}
-    const fid='lib_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
-    const fobj={id:fid,name:file.name,type:file.type.split('/')[0]||'file',mime:file.type,
-      data:'',size:fmtSize(file.size),bytes:file.size,date:new Date().toLocaleDateString(),_uploading:true};
-    libFiles.push(fobj);renderLib();updateLibStorageBar();
-    setSyncBadge('syncing');
-    if(firebaseReady&&currentUserId&&storage){
-      const ref=storage.ref('users/'+currentUserId+'/library/'+fid);
-      ref.put(file)
-        .then(s=>s.ref.getDownloadURL())
-        .then(url=>{
-          fobj.cloudUrl=url; fobj.data=url; fobj._uploading=false;
-          // Save full metadata to Firestore — this triggers onSnapshot on ALL devices
-          fsSetIn('library',fid,{id:fid,name:file.name,type:fobj.type,mime:fobj.mime,
-            size:fobj.size,bytes:file.size,date:fobj.date,cloudUrl:url,updatedAt:Date.now()});
-          setSyncBadge('synced');
-          showToast('☁️ "'+file.name+'" synced to cloud!',2000);
-        })
-        .catch(err=>{
-          console.warn('Storage upload failed:',err);
-          fobj._uploading=false;
-          showToast('⚠️ Upload failed for "'+file.name+'". Check your connection.',3000);
-          // Remove failed upload from local list so it doesn't show as broken
-          const idx=libFiles.indexOf(fobj);
-          if(idx>=0){libFiles.splice(idx,1);renderLib();updateLibStorageBar();}
-        });
-    } else {
-      // Firebase not ready — wait and retry
-      const _waitAndUpload = () => {
-        if(firebaseReady&&currentUserId&&storage){
-          const ref=storage.ref('users/'+currentUserId+'/library/'+fid);
-          ref.put(file)
-            .then(s=>s.ref.getDownloadURL())
-            .then(url=>{
-              fobj.cloudUrl=url; fobj.data=url; fobj._uploading=false;
-              fsSetIn('library',fid,{id:fid,name:file.name,type:fobj.type,mime:fobj.mime,
-                size:fobj.size,bytes:file.size,date:fobj.date,cloudUrl:url,updatedAt:Date.now()});
-              setSyncBadge('synced');
-              showToast('☁️ "'+file.name+'" synced to cloud!',2000);
-            }).catch(err=>console.warn('Storage retry failed:',err));
-        } else { setTimeout(_waitAndUpload, 1000); }
+// ── Compress image to base64 JPEG for Firestore storage ──
+// Firestore docs have a 1MB limit, so we compress images to fit.
+function _fileToBase64Firestore(file){
+  return new Promise((resolve, reject)=>{
+    // For images: compress to max 1200px, 75% quality → typically 80–200KB
+    if(file.type.startsWith('image/')){
+      const img = new Image();
+      const objUrl = URL.createObjectURL(file);
+      img.onload = ()=>{
+        URL.revokeObjectURL(objUrl);
+        const MAX = 1200;
+        let w = img.width, h = img.height;
+        if(w > MAX || h > MAX){
+          const scale = MAX / Math.max(w, h);
+          w = Math.round(w * scale); h = Math.round(h * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const b64 = canvas.toDataURL('image/jpeg', 0.75);
+        resolve(b64);
       };
-      setTimeout(_waitAndUpload, 1000);
+      img.onerror = ()=>{ URL.revokeObjectURL(objUrl); reject(new Error('Image load failed')); };
+      img.src = objUrl;
+    } else {
+      // Non-image: read raw as base64 (PDFs, docs, etc.)
+      const reader = new FileReader();
+      reader.onload = e => resolve(e.target.result);
+      reader.onerror = () => reject(new Error('File read failed'));
+      reader.readAsDataURL(file);
     }
-  });e.target.value='';
+  });
+}
+
+// ── Save file in chunks if base64 > 800KB (Firestore 1MB doc limit) ──
+// For small files: save inline. For large files: split into chunks.
+const _CHUNK_SIZE = 700 * 1024; // 700KB per chunk (in chars)
+
+async function _saveLibToFirestore(fid, fobj, b64){
+  if(!firebaseReady || !currentUserId) throw new Error('Not ready');
+  const meta = {
+    id: fid, name: fobj.name, type: fobj.type, mime: fobj.mime,
+    size: fobj.size, bytes: fobj.bytes, date: fobj.date, updatedAt: Date.now()
+  };
+  if(b64.length <= _CHUNK_SIZE){
+    // Small enough — save inline
+    await fsColl('library').doc(fid).set({...meta, data: b64, chunked: false}, {merge:false});
+  } else {
+    // Split into chunks
+    const chunks = [];
+    for(let i=0; i < b64.length; i += _CHUNK_SIZE){
+      chunks.push(b64.slice(i, i + _CHUNK_SIZE));
+    }
+    // Save each chunk as a sub-document
+    const batch = db.batch();
+    chunks.forEach((chunk, i)=>{
+      const ref = fsColl('library').doc(fid).collection('chunks').doc('c'+i);
+      batch.set(ref, {index: i, data: chunk});
+    });
+    await batch.commit();
+    // Save meta with chunked flag (no inline data)
+    await fsColl('library').doc(fid).set({...meta, data:'', chunked: true, chunkCount: chunks.length}, {merge:false});
+  }
+}
+
+// ── Load chunked file back ──
+async function _loadChunkedLib(fid){
+  const snap = await fsColl('library').doc(fid).collection('chunks').orderBy('index').get();
+  let b64 = '';
+  snap.forEach(doc => b64 += doc.data().data);
+  return b64;
+}
+
+function handleLibUpload(e){
+  const curBytes = libFiles.reduce((s,f)=>s+(f.bytes||0), 0);
+  const maxB = typeof _libMaxBytes!=='undefined' ? _libMaxBytes : 1073741824;
+  Array.from(e.target.files).forEach(async file=>{
+    if(curBytes + file.size > maxB){ showToast('⚠️ Storage limit reached!',3000); return; }
+    // Block files over 4MB (base64 would exceed Firestore limits even chunked)
+    if(file.size > 4 * 1024 * 1024){
+      showToast('⚠️ File too large (max 4MB). Please compress it first.',4000); return;
+    }
+
+    const fid = 'lib_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
+    const fobj = {
+      id: fid, name: file.name, type: file.type.split('/')[0]||'file', mime: file.type,
+      data:'', size: fmtSize(file.size), bytes: file.size,
+      date: new Date().toLocaleDateString(), _uploading:true, _uploadPct:0
+    };
+    libFiles.push(fobj); renderLib(); updateLibStorageBar();
+    setSyncBadge('syncing');
+
+    try{
+      // Step 1: Convert to base64 (with compression for images)
+      fobj._uploadPct = 20; renderLib();
+      const b64 = await _fileToBase64Firestore(file);
+
+      fobj._uploadPct = 50; renderLib();
+
+      // Step 2: Wait for Firebase to be ready
+      await new Promise(res=>{ const w=()=>{ if(firebaseReady&&currentUserId) res(); else setTimeout(w,400); }; w(); });
+
+      fobj._uploadPct = 70; renderLib();
+
+      // Step 3: Save to Firestore
+      await _saveLibToFirestore(fid, fobj, b64);
+
+      // Step 4: Done!
+      fobj.data = b64; fobj._uploading = false; fobj._uploadPct = 100;
+      setSyncBadge('synced');
+      renderLib(); updateLibStorageBar();
+      showToast('✅ "'+file.name+'" saved to your library!', 2200);
+
+    } catch(err){
+      console.warn('[LibUpload] Failed:', err);
+      fobj._uploading = false;
+      const idx = libFiles.indexOf(fobj);
+      if(idx >= 0){ libFiles.splice(idx, 1); }
+      renderLib(); updateLibStorageBar();
+      showToast('❌ Could not save "'+file.name+'": '+err.message, 4000);
+    }
+  });
+  e.target.value = '';
 }
 function fmtSize(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB';}
 function renderLib(){
@@ -4442,8 +4532,19 @@ const filtered=libFilter==='all'?libFiles:libFiles.filter(f=>_libFileType(f)===l
     const src = f.cloudUrl || f.data || '';
     let thumb;
     if(f._uploading){
-      // Still uploading — show spinner
-      thumb = `<div style="font-size:1.6rem;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(200,180,240,0.12);border-radius:10px;gap:6px;"><div style="width:28px;height:28px;border:3px solid rgba(139,92,246,0.2);border-top-color:#8b5cf6;border-radius:50%;animation:spinH 0.8s linear infinite;"></div><span style="font-size:0.65rem;color:#8b5cf6;font-weight:700;">Uploading…</span></div>`;
+      const pct = f._uploadPct||0;
+      const circumference = 2*Math.PI*13; // r=13
+      const offset = circumference - (pct/100)*circumference;
+      thumb = `<div style="font-size:1.6rem;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(200,180,240,0.12);border-radius:10px;gap:5px;">
+        <svg width="36" height="36" viewBox="0 0 36 36">
+          <circle cx="18" cy="18" r="13" fill="none" stroke="rgba(139,92,246,0.2)" stroke-width="3"/>
+          <circle cx="18" cy="18" r="13" fill="none" stroke="#8b5cf6" stroke-width="3"
+            stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
+            stroke-linecap="round" transform="rotate(-90 18 18)" style="transition:stroke-dashoffset 0.4s ease;"/>
+          <text x="18" y="22" text-anchor="middle" font-size="8" fill="#8b5cf6" font-weight="700">${pct}%</text>
+        </svg>
+        <span style="font-size:0.62rem;color:#8b5cf6;font-weight:700;">Uploading…</span>
+      </div>`;
     } else if(ftype==='image' && src){
       thumb = `<img src="${src}" onerror="this.parentNode.innerHTML='<div style=\'font-size:2.6rem;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(200,180,240,0.12);border-radius:10px;\'>🖼️</div>'" />`;
     } else if(ftype==='video' && src){
@@ -4458,9 +4559,18 @@ const filtered=libFilter==='all'?libFiles:libFiles.filter(f=>_libFileType(f)===l
 }
 function fsDelLib(f){
   if(!firebaseReady||!currentUserId)return;
-  fsDelFrom('library',f.id);
-  if(storage&&f.id){
-    try{storage.ref('users/'+currentUserId+'/library/'+f.id).delete().catch(()=>{});}catch(e){}
+  // Delete Firestore doc (and chunks sub-collection if chunked)
+  const docRef = fsColl('library').doc(f.id);
+  if(f.chunked && f.chunkCount > 0){
+    // Delete chunks first
+    const batch = db.batch();
+    for(let i=0; i < f.chunkCount; i++){
+      batch.delete(docRef.collection('chunks').doc('c'+i));
+    }
+    batch.delete(docRef);
+    batch.commit().catch(e=>console.warn('fsDelLib chunks:',e));
+  } else {
+    docRef.delete().catch(e=>console.warn('fsDelLib:',e));
   }
 }
 function fsRestoreLib(f){
