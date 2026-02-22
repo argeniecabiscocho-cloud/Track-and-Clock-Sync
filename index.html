@@ -2636,7 +2636,7 @@ function _initFirebase(){
       .then(()=>console.log('[Firebase] Anonymous auth OK'))
       .catch(e=>console.warn('[Firebase] Anonymous auth failed:',e));
     // If startSync was queued before Firebase was ready, run it now
-    if(currentUserId) startSync();
+    if(currentUserId){ startSync(); }
     // handleInviteLink is triggered by onUserSignedIn — don't call here (no currentUserId yet)
 
     // ── Handle mobile redirect sign-in result ──
@@ -2658,11 +2658,8 @@ function _initFirebase(){
         setTimeout(()=>addNotification('login','✅','Signed In with Google',`Welcome back, ${name}! (${email})`),1200);
       }
     }).catch(e=>{
-      if(e.code !== 'auth/no-auth-event'){
+      if(e && e.code !== 'auth/no-auth-event'){
         console.warn('[Auth] getRedirectResult error:',e);
-        if(e.code === 'auth/popup-blocked' || e.message){
-          showToast('❌ Google Sign-In failed: ' + (e.message||e.code), 4000);
-        }
       }
     });
   }catch(e){
@@ -2790,7 +2787,10 @@ function stopSync(){
 }
 
 function startSync(){
-  if(!firebaseReady||!currentUserId)return;
+  if(!firebaseReady||!currentUserId){ 
+    // Retry until both are ready — needed for mobile redirect sign-in timing
+    setTimeout(startSync, 400); return; 
+  }
   stopSync();
   setSyncBadge('syncing');
 
@@ -4364,25 +4364,49 @@ function handleLibUpload(e){
   const maxB=typeof _libMaxBytes!=='undefined'?_libMaxBytes:1073741824;
   Array.from(e.target.files).forEach(file=>{
     if(curBytes+file.size>maxB){showToast('⚠️ Storage limit reached! Upgrade to Pro for more.',3000);return;}
-    const r=new FileReader();
-    r.onload=ev=>{
-      const fid='lib_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
-      const fobj={id:fid,name:file.name,type:file.type.split('/')[0]||'file',mime:file.type,
-        data:ev.target.result,size:fmtSize(file.size),bytes:file.size,date:new Date().toLocaleDateString()};
-      libFiles.push(fobj);renderLib();updateLibStorageBar();
-      // Upload to Firebase Storage + save metadata
-      if(firebaseReady&&currentUserId&&storage){
-        const ref=storage.ref('users/'+currentUserId+'/library/'+fid);
-        ref.put(file).then(s=>s.ref.getDownloadURL()).then(url=>{
-          fobj.cloudUrl=url;fobj.data=url;
+    const fid='lib_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
+    const fobj={id:fid,name:file.name,type:file.type.split('/')[0]||'file',mime:file.type,
+      data:'',size:fmtSize(file.size),bytes:file.size,date:new Date().toLocaleDateString(),_uploading:true};
+    libFiles.push(fobj);renderLib();updateLibStorageBar();
+    setSyncBadge('syncing');
+    if(firebaseReady&&currentUserId&&storage){
+      const ref=storage.ref('users/'+currentUserId+'/library/'+fid);
+      ref.put(file)
+        .then(s=>s.ref.getDownloadURL())
+        .then(url=>{
+          fobj.cloudUrl=url; fobj.data=url; fobj._uploading=false;
+          // Save full metadata to Firestore — this triggers onSnapshot on ALL devices
           fsSetIn('library',fid,{id:fid,name:file.name,type:fobj.type,mime:fobj.mime,
             size:fobj.size,bytes:file.size,date:fobj.date,cloudUrl:url,updatedAt:Date.now()});
           setSyncBadge('synced');
           showToast('☁️ "'+file.name+'" synced to cloud!',2000);
-        }).catch(err=>console.warn('Storage upload:',err));
-      }
-    };
-    r.readAsDataURL(file);
+        })
+        .catch(err=>{
+          console.warn('Storage upload failed:',err);
+          fobj._uploading=false;
+          showToast('⚠️ Upload failed for "'+file.name+'". Check your connection.',3000);
+          // Remove failed upload from local list so it doesn't show as broken
+          const idx=libFiles.indexOf(fobj);
+          if(idx>=0){libFiles.splice(idx,1);renderLib();updateLibStorageBar();}
+        });
+    } else {
+      // Firebase not ready — wait and retry
+      const _waitAndUpload = () => {
+        if(firebaseReady&&currentUserId&&storage){
+          const ref=storage.ref('users/'+currentUserId+'/library/'+fid);
+          ref.put(file)
+            .then(s=>s.ref.getDownloadURL())
+            .then(url=>{
+              fobj.cloudUrl=url; fobj.data=url; fobj._uploading=false;
+              fsSetIn('library',fid,{id:fid,name:file.name,type:fobj.type,mime:fobj.mime,
+                size:fobj.size,bytes:file.size,date:fobj.date,cloudUrl:url,updatedAt:Date.now()});
+              setSyncBadge('synced');
+              showToast('☁️ "'+file.name+'" synced to cloud!',2000);
+            }).catch(err=>console.warn('Storage retry failed:',err));
+        } else { setTimeout(_waitAndUpload, 1000); }
+      };
+      setTimeout(_waitAndUpload, 1000);
+    }
   });e.target.value='';
 }
 function fmtSize(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB';}
@@ -4415,15 +4439,43 @@ const filtered=libFilter==='all'?libFiles:libFiles.filter(f=>_libFileType(f)===l
     const el=document.createElement('div');el.className='lib-item';
     const ftype = _libFileType(f);
     const ficon = _libFileIcon(ftype);
-    let thumb = ftype==='image' ? `<img src="${f.data}"/>`
-      : ftype==='video' ? `<video src="${f.data}" muted></video>`
-      : `<div style="font-size:2.6rem;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(200,180,240,0.12);border-radius:10px;">${ficon}</div>`;
+    const src = f.cloudUrl || f.data || '';
+    let thumb;
+    if(f._uploading){
+      // Still uploading — show spinner
+      thumb = `<div style="font-size:1.6rem;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(200,180,240,0.12);border-radius:10px;gap:6px;"><div style="width:28px;height:28px;border:3px solid rgba(139,92,246,0.2);border-top-color:#8b5cf6;border-radius:50%;animation:spinH 0.8s linear infinite;"></div><span style="font-size:0.65rem;color:#8b5cf6;font-weight:700;">Uploading…</span></div>`;
+    } else if(ftype==='image' && src){
+      thumb = `<img src="${src}" onerror="this.parentNode.innerHTML='<div style=\'font-size:2.6rem;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(200,180,240,0.12);border-radius:10px;\'>🖼️</div>'" />`;
+    } else if(ftype==='video' && src){
+      thumb = `<video src="${src}" muted preload="metadata"></video>`;
+    } else {
+      thumb = `<div style="font-size:2.6rem;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(200,180,240,0.12);border-radius:10px;">${ficon}</div>`;
+    }
     el.innerHTML=`<div class="lib-thumb">${thumb}</div><div class="lib-name">${f.name}</div><div class="lib-meta">${f.size} · ${f.date}</div><button class="lib-del" onclick="delLib(${idx},event)">✕</button>`;
-    el.onclick=()=>previewFile(idx);grid.appendChild(el);
+    el.onclick=()=>{ if(!f._uploading) previewFile(idx); };
+    grid.appendChild(el);
   });
 }
+function fsDelLib(f){
+  if(!firebaseReady||!currentUserId)return;
+  fsDelFrom('library',f.id);
+  if(storage&&f.id){
+    try{storage.ref('users/'+currentUserId+'/library/'+f.id).delete().catch(()=>{});}catch(e){}
+  }
+}
+function fsRestoreLib(f){
+  if(!firebaseReady||!currentUserId||!f.cloudUrl)return;
+  fsSetIn('library',f.id,{id:f.id,name:f.name,type:f.type,mime:f.mime,
+    size:f.size,bytes:f.bytes||0,date:f.date,cloudUrl:f.cloudUrl||f.data||'',updatedAt:Date.now()});
+}
 function delLib(idx,e){
-  e.stopPropagation();lastDeleted={file:libFiles[idx],idx};libFiles.splice(idx,1);renderLib();showUndoToast();
+  e.stopPropagation();
+  const f=libFiles[idx];
+  lastDeleted={file:f,idx};
+  libFiles.splice(idx,1);
+  renderLib(); updateLibStorageBar();
+  fsDelLib(f);
+  showUndoToast();
 }
 let toastEl=null;
 function showUndoToast(){
@@ -4434,18 +4486,37 @@ function showUndoToast(){
   undoTimer=setTimeout(()=>{if(toastEl){toastEl.classList.add('hide');setTimeout(()=>{if(toastEl){toastEl.remove();toastEl=null;}},300);}},5000);
 }
 function undoDelete(){
-  if(lastDeleted){libFiles.splice(lastDeleted.idx,0,lastDeleted.file);lastDeleted=null;renderLib();if(toastEl){toastEl.remove();toastEl=null;}if(undoTimer)clearTimeout(undoTimer);showToast('✅ File restored!',2000);}
+  if(lastDeleted){
+    const f=lastDeleted.file;
+    libFiles.splice(lastDeleted.idx,0,f);
+    fsRestoreLib(f);
+    lastDeleted=null; renderLib(); updateLibStorageBar();
+    if(toastEl){toastEl.remove();toastEl=null;}
+    if(undoTimer)clearTimeout(undoTimer);
+    showToast('✅ File restored!',2000);
+  }
 }
 function showToast(msg,dur=2500){const t=document.createElement('div');t.className='undo-toast';t.innerHTML=`<span>${msg}</span>`;document.body.appendChild(t);setTimeout(()=>{t.classList.add('hide');setTimeout(()=>t.remove(),300);},dur);}
 function previewFile(idx){
-  const f=libFiles[idx];document.getElementById('fileModalTitle').textContent=f.name;
+  const f=libFiles[idx];
+  if(f._uploading){showToast('⏳ File is still uploading, please wait…',2000);return;}
+  document.getElementById('fileModalTitle').textContent=f.name;
   const c=document.getElementById('fileModalContent');
   const ftype2 = _libFileType(f);
-  if(ftype2==='image') c.innerHTML=`<img src="${f.data}" style="max-width:100%;max-height:62vh;border-radius:11px;"/>`;
-  else if(ftype2==='video') c.innerHTML=`<video src="${f.data}" controls style="max-width:100%;max-height:62vh;border-radius:11px;"></video>`;
-  else if(ftype2==='audio') c.innerHTML=`<audio src="${f.data}" controls style="width:100%;margin-top:10px;"></audio>`;
-  else if(ftype2==='pdf') c.innerHTML=`<iframe src="${f.data}" style="width:100%;height:65vh;border:none;border-radius:11px;"></iframe>`;
-  else c.innerHTML=`<div style="padding:30px 20px;text-align:center;color:#7a6fa0;font-size:3rem;line-height:2;">${_libFileIcon(ftype2)}<br><span style="font-size:0.95rem;font-weight:700;">${f.name}</span><br><span style="font-size:0.78rem;">Preview not available for this file type.<br>The file is saved in your library.</span></div>`;
+  const src = f.cloudUrl || f.data || '';
+  if(!src){
+    c.innerHTML=`<div style="padding:30px 20px;text-align:center;color:#7a6fa0;"><div style="font-size:3rem;">⚠️</div><div style="font-size:0.9rem;font-weight:700;margin-top:10px;">File not available.<br>It may still be uploading or failed to sync.</div></div>`;
+  } else if(ftype2==='image'){
+    c.innerHTML=`<img src="${src}" style="max-width:100%;max-height:62vh;border-radius:11px;" onerror="this.outerHTML='<div style=padding:20px;text-align:center;color:#c05050>⚠️ Image failed to load</div>'"/>`;
+  } else if(ftype2==='video'){
+    c.innerHTML=`<video src="${src}" controls style="max-width:100%;max-height:62vh;border-radius:11px;"></video>`;
+  } else if(ftype2==='audio'){
+    c.innerHTML=`<audio src="${src}" controls style="width:100%;margin-top:10px;"></audio>`;
+  } else if(ftype2==='pdf'){
+    c.innerHTML=`<iframe src="${src}" style="width:100%;height:65vh;border:none;border-radius:11px;"></iframe>`;
+  } else {
+    c.innerHTML=`<div style="padding:30px 20px;text-align:center;color:#7a6fa0;font-size:3rem;line-height:2;">${_libFileIcon(ftype2)}<br><span style="font-size:0.95rem;font-weight:700;">${f.name}</span><br><a href="${src}" target="_blank" style="font-size:0.82rem;color:#8b5cf6;font-weight:700;">📥 Download / Open</a></div>`;
+  }
   document.getElementById('fileModal').classList.remove('hidden');
 }
 function closeFileModal(){document.getElementById('fileModal').classList.add('hidden');}
