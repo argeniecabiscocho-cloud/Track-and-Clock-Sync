@@ -2819,40 +2819,6 @@ function startSync(){
     else renderGroupTabs(); // show empty state
   }).catch(()=>{ renderGroupTabs(); });
 
-  // ── appearance (theme + font) ──
-  fsGet('meta/appearance').then(d=>{
-    if(!d) return;
-    if(d.theme && themes[d.theme]){
-      currentTheme = d.theme;
-      const btn = document.querySelector(`.theme-opt[onclick*="'${d.theme}'"]`);
-      setTheme(d.theme, btn||null);
-    }
-    if(d.fontSize){
-      currentFontSize = d.fontSize;
-      document.documentElement.style.setProperty('--base-font', d.fontSize);
-      document.body.style.fontSize = d.fontSize;
-      const btn = document.querySelector(`.font-btn[onclick*="${d.fontSize}"]`);
-      if(btn){ document.querySelectorAll('.font-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }
-    }
-  });
-
-  // ── avatar ──
-  fsGet('meta/avatar').then(d=>{
-    if(!d || !d.state) return;
-    avState = {...avState, ...d.state};
-    updateAvatar();
-  });
-
-  // ── streak ──
-  fsGet('meta/streak').then(d=>{
-    if(!d) return;
-    const today = new Date().toDateString();
-    let streak = d.count || 1;
-    if(d.lastDay && d.lastDay !== today){ streak++; fsSet('meta/streak',{count:streak, lastDay:today, updatedAt:Date.now()}); }
-    currentStreak = streak;
-    _applyStreak(streak);
-  });
-
   // ── library metadata (real-time) ──
   _unsubs.push(fsColl('library').onSnapshot(snap=>{
     libFiles=[];
@@ -3514,35 +3480,34 @@ function goToLanding(){
     var bell=document.getElementById('notifBellBtn');
     if(mp)mp.classList.add('intro-hidden');
 
-    // ── Show a "tap to begin" hint so user knows to click ──
-    var tapHint = document.createElement('div');
-    tapHint.id = 'introTapHint';
-    tapHint.style.cssText = 'position:absolute;bottom:38px;left:50%;transform:translateX(-50%);font-family:\'Nunito\',sans-serif;font-size:0.92rem;font-weight:800;color:rgba(100,80,160,0.75);animation:fadeUp 0.7s 1.2s ease both;opacity:0;white-space:nowrap;letter-spacing:0.5px;';
-    tapHint.textContent = '✨ Tap anywhere to begin';
-    intro.appendChild(tapHint);
-
-    // ── Fire audio ONLY on user gesture ──
+    // ── Fire audio on first user interaction (browser requires this) ──
     var audioFired = false;
     function fireIntroAudio() {
       if (audioFired) return;
       audioFired = true;
-      // Remove tap hint
-      if(tapHint) tapHint.style.display = 'none';
-      // Resume AudioContext — MUST happen inside user gesture handler
-      try {
-        if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if(audioCtx.state === 'suspended') audioCtx.resume();
-      } catch(e) {}
+      // Resume AudioContext if suspended (autoplay policy)
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
       playTickSounds();
+      // Small delay so ticks start first, then voice kicks in
       setTimeout(speakIntro, 600);
-      // Auto-advance after audio has time to play
-      var delay = window.innerWidth <= 768 ? 3500 : 7000;
-      setTimeout(goToLanding, delay);
     }
 
-    // Click/tap fires audio and starts countdown
-    intro.addEventListener('click', function() { fireIntroAudio(); });
-    intro.addEventListener('touchend', function(e){ e.preventDefault(); fireIntroAudio(); });
+    // Try to fire immediately on any interaction with the intro
+    intro.addEventListener('click', function() { fireIntroAudio(); goToLanding(); });
+    intro.addEventListener('touchend', function(e){ e.preventDefault(); fireIntroAudio(); goToLanding(); });
+
+    // Also auto-fire audio after a short delay even without interaction
+    // (works on some browsers, fails silently on others — that's fine)
+    setTimeout(fireIntroAudio, 400);
+
+    // Auto-advance after delay
+    var delay = window.innerWidth <= 768 ? 3500 : 7000;
+    setTimeout(goToLanding, delay);
+    // Shorten "tap to skip" on mobile
+    if(window.innerWidth<=768){
+      var skip=document.getElementById('tapToSkip');
+      if(skip) skip.style.animation='fadeUp 0.5s 1.8s ease both';
+    }
   }
   if(document.readyState==='loading'){
     document.addEventListener('DOMContentLoaded', run);
@@ -4405,8 +4370,29 @@ const filtered=libFilter==='all'?libFiles:libFiles.filter(f=>_libFileType(f)===l
     el.onclick=()=>previewFile(idx);grid.appendChild(el);
   });
 }
+function fsDelLib(f){
+  if(!firebaseReady||!currentUserId)return;
+  // Delete Firestore metadata
+  fsDelFrom('library',f.id);
+  // Delete from Firebase Storage
+  if(storage&&f.id){
+    try{storage.ref('users/'+currentUserId+'/library/'+f.id).delete().catch(()=>{});}catch(e){}
+  }
+}
+function fsRestoreLib(f){
+  if(!firebaseReady||!currentUserId)return;
+  fsSetIn('library',f.id,{id:f.id,name:f.name,type:f.type,mime:f.mime,
+    size:f.size,bytes:f.bytes||0,date:f.date,cloudUrl:f.cloudUrl||f.data||'',updatedAt:Date.now()});
+}
 function delLib(idx,e){
-  e.stopPropagation();lastDeleted={file:libFiles[idx],idx};libFiles.splice(idx,1);renderLib();showUndoToast();
+  e.stopPropagation();
+  const f=libFiles[idx];
+  lastDeleted={file:f,idx};
+  libFiles.splice(idx,1);
+  renderLib();
+  updateLibStorageBar();
+  fsDelLib(f);
+  showUndoToast();
 }
 let toastEl=null;
 function showUndoToast(){
@@ -4417,7 +4403,15 @@ function showUndoToast(){
   undoTimer=setTimeout(()=>{if(toastEl){toastEl.classList.add('hide');setTimeout(()=>{if(toastEl){toastEl.remove();toastEl=null;}},300);}},5000);
 }
 function undoDelete(){
-  if(lastDeleted){libFiles.splice(lastDeleted.idx,0,lastDeleted.file);lastDeleted=null;renderLib();if(toastEl){toastEl.remove();toastEl=null;}if(undoTimer)clearTimeout(undoTimer);showToast('✅ File restored!',2000);}
+  if(lastDeleted){
+    const f=lastDeleted.file;
+    libFiles.splice(lastDeleted.idx,0,f);
+    fsRestoreLib(f);
+    lastDeleted=null;renderLib();updateLibStorageBar();
+    if(toastEl){toastEl.remove();toastEl=null;}
+    if(undoTimer)clearTimeout(undoTimer);
+    showToast('✅ File restored!',2000);
+  }
 }
 function showToast(msg,dur=2500){const t=document.createElement('div');t.className='undo-toast';t.innerHTML=`<span>${msg}</span>`;document.body.appendChild(t);setTimeout(()=>{t.classList.add('hide');setTimeout(()=>t.remove(),300);},dur);}
 function previewFile(idx){
@@ -4437,32 +4431,11 @@ function closeFileModal(){document.getElementById('fileModal').classList.add('hi
 function saveProfileName(){const v=document.getElementById('editNameInput').value.trim();if(!v)return;document.getElementById('profileNameDisplay').textContent=v;document.getElementById('profileNameVal').textContent=v;document.getElementById('sidebarName').textContent=v;}
 
 // ===== STREAK =====
-let currentStreak = 1;
 function initStreak(){
-  const today = new Date().toDateString();
-  // Try Firebase first if signed in, else fall back to localStorage
-  if(firebaseReady && currentUserId){
-    fsGet('meta/streak').then(d=>{
-      let streak = d ? (d.count||1) : parseInt(localStorage.getItem('tc_streak')||'1');
-      const lastDay = d ? (d.lastDay||'') : (localStorage.getItem('tc_lastday')||'');
-      if(lastDay && lastDay !== today){ streak++; }
-      currentStreak = streak;
-      fsSet('meta/streak', {count: streak, lastDay: today, updatedAt: Date.now()});
-      _applyStreak(streak);
-    });
-  } else {
-    let streak = parseInt(localStorage.getItem('tc_streak')||'1');
-    const lastDay = localStorage.getItem('tc_lastday')||'';
-    if(lastDay && lastDay !== today){ streak++; localStorage.setItem('tc_streak', streak); localStorage.setItem('tc_lastday', today); }
-    else if(!lastDay) localStorage.setItem('tc_lastday', today);
-    currentStreak = streak;
-    _applyStreak(streak);
-  }
-}
-function _applyStreak(n){
-  document.getElementById('streakCount').textContent=n;
-  document.getElementById('streakVal').textContent=n;
-  document.getElementById('sidebarStreak').textContent=`🔥 Day ${n} streak`;
+  const today=new Date().toDateString();let streak=parseInt(localStorage.getItem('tc_streak')||'1'),lastDay=localStorage.getItem('tc_lastday')||'';
+  if(lastDay&&lastDay!==today){streak++;localStorage.setItem('tc_streak',streak);localStorage.setItem('tc_lastday',today);}
+  else if(!lastDay)localStorage.setItem('tc_lastday',today);
+  document.getElementById('streakCount').textContent=streak;document.getElementById('streakVal').textContent=streak;document.getElementById('sidebarStreak').textContent=`🔥 Day ${streak} streak`;
 }
 
 // ===== THEMES =====
@@ -4474,9 +4447,6 @@ const themes={
   rose:{bg1:'#f0c8d4',bg2:'#f0c8f0',bg3:'#f8d8e8',dark:'#5a1a3a',mid:'#8a4a6a',card:'rgba(255,235,245,0.72)',decos:['🌹','💗','🌺','🏵️','💝','🌸','🦢','💮'],music:'cozy'},
   night:{bg1:'#2a2540',bg2:'#1a3a4a',bg3:'#2a1a4a',dark:'#e0d8f8',mid:'#a090c0',card:'rgba(35,28,70,0.72)',decos:['🌙','⭐','🔮','✨','🌌','💫','🌠','🦉'],music:'focus'}
 };
-let currentTheme = 'lavender';
-let currentFontSize = '16px';
-
 function setTheme(name,btn){
   document.querySelectorAll('.theme-opt').forEach(t=>t.classList.remove('active'));
   if(btn)btn.classList.add('active');
@@ -4494,25 +4464,22 @@ function setTheme(name,btn){
       deco.appendChild(el);
     });
   }
-  currentTheme = name;
   // Music
   if(t.music){document.querySelectorAll('.mp-mood-chip').forEach(c=>c.classList.remove('active'));const chip=document.querySelector(`.mp-mood-chip[onclick*="${t.music}"]`);if(chip)chip.classList.add('active');setMoodChip(t.music,chip||document.querySelector('.mp-mood-chip'));}
   // Canvas animated scene
   if(window.TC)TC.setScene(name);
-  // Sync to Firebase
-  fsSet('meta/appearance', {theme: name, updatedAt: Date.now()});
 }
 function setMood(btn){document.querySelectorAll('.mood-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');}
 function setFont(size,btn){
+  // Only reset font-size buttons, not mood buttons
   document.querySelectorAll('.font-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   document.documentElement.style.setProperty('--base-font',size);
+  // Apply font size visually to everything
   document.body.style.fontSize=size;
+  // Update preview
   const prev=document.getElementById('fontPreviewText');
   if(prev)prev.style.fontSize=size;
-  currentFontSize = size;
-  // Sync to Firebase
-  fsSet('meta/appearance', {fontSize: size, updatedAt: Date.now()});
 }
 (function initDecos(){
   if(window.innerWidth<=768) return; // skip on mobile
@@ -4752,8 +4719,6 @@ function saveAvatar(){
   document.getElementById('profileNameDisplay').textContent=name;
   document.getElementById('editNameInput').value=name;
   closeAvatarModal();showToast('💜 Avatar saved!',2000);
-  // Sync avatar to Firebase
-  fsSet('meta/avatar', {state: avState, updatedAt: Date.now()});
 }
 
 renderCalendar();
