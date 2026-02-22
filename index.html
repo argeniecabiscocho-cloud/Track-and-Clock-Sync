@@ -12,9 +12,8 @@
   const urls=[
     'https://www.gstatic.com/firebasejs/'+FBVER+'/firebase-app-compat.js',
     'https://www.gstatic.com/firebasejs/'+FBVER+'/firebase-auth-compat.js',
-    'https://www.gstatic.com/firebasejs/'+FBVER+'/firebase-firestore-compat.js',
-    // firebase-storage removed — using Firestore base64 storage instead
-    'https://accounts.google.com/gsi/client'
+    'https://www.gstatic.com/firebasejs/'+FBVER+'/firebase-firestore-compat.js'
+    // GIS removed — using Firebase signInWithPopup/Redirect instead
   ];
   let i=0;
   function next(){
@@ -1290,7 +1289,12 @@ body{font-family:'Quicksand',sans-serif;font-size:var(--base-font);min-height:10
     <button class="occ-btn" onclick="pickOcc('Healthcare',this)"><span class="occ-icon">🏥</span>Healthcare</button>
     <button class="occ-btn" onclick="pickOcc('Other',this)"><span class="occ-icon">✨</span>Other</button>
   </div>
-  <div id="googleSignInBtn" style="animation:fadeUp 0.8s 0.55s ease both;margin-top:10px;min-height:44px;display:flex;align-items:center;justify-content:center;"></div>
+  <div id="googleSignInBtn" style="animation:fadeUp 0.8s 0.55s ease both;margin-top:10px;display:flex;align-items:center;justify-content:center;">
+    <button onclick="signInWithGoogle()" style="display:flex;align-items:center;gap:10px;padding:12px 24px;border-radius:24px;border:1.5px solid rgba(200,180,240,0.5);background:rgba(255,255,255,0.92);cursor:pointer;font-family:'Nunito',sans-serif;font-weight:800;font-size:1rem;color:#3d3260;box-shadow:0 4px 18px rgba(139,92,246,0.13);transition:transform 0.15s,box-shadow 0.15s;" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 24px rgba(139,92,246,0.22)'" onmouseout="this.style.transform='';this.style.boxShadow='0 4px 18px rgba(139,92,246,0.13)'">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Continue with Google
+    </button>
+  </div>
   <div style="margin-top:8px;font-size:0.8rem;color:var(--mid);font-weight:600;animation:fadeUp 0.8s 0.65s ease both;">or</div>
   <button class="start-btn" style="margin-top:6px;" onclick="goToApp()">Continue as Guest ✨</button>
 </div>
@@ -2616,6 +2620,9 @@ const firebaseConfig = {
 };
 let db=null,auth=null,storage=null,firebaseReady=false;
 let currentUserId=null;
+// Resolves when Firebase Auth has a confirmed signed-in user (anon or Google)
+let _authReadyResolve=null;
+const _authReady = new Promise(res=>{ _authReadyResolve=res; });
 
 // Wait for dynamically-loaded Firebase SDK then init
 function _initFirebase(){
@@ -2631,10 +2638,23 @@ function _initFirebase(){
     storage=null; // Firebase Storage not used — files stored as base64 in Firestore
     firebaseReady=true;
     console.log('[Firebase] Connected ✅');
-    // Sign in anonymously so every visitor passes Firestore security rules
+    // Listen for any auth state (anon OR Google)
+    auth.onAuthStateChanged(user=>{
+      if(user){
+        console.log('[Firebase] Auth ready — uid:', user.uid);
+        if(_authReadyResolve){ _authReadyResolve(user); _authReadyResolve=null; }
+      }
+    });
+    // Try anonymous sign-in; if it fails (disabled in console), resolve anyway after 3s
     auth.signInAnonymously()
       .then(()=>console.log('[Firebase] Anonymous auth OK'))
-      .catch(e=>console.warn('[Firebase] Anonymous auth failed:',e));
+      .catch(e=>{
+        console.warn('[Firebase] Anonymous auth failed (may be disabled):',e.code);
+        // Resolve _authReady anyway so app doesn't hang — Firestore rules may allow unauthenticated reads
+        if(_authReadyResolve){ _authReadyResolve(null); _authReadyResolve=null; }
+      });
+    // Hard fallback: resolve after 4s no matter what
+    setTimeout(()=>{ if(_authReadyResolve){ console.warn('[Auth] Timeout — proceeding without auth'); _authReadyResolve(null); _authReadyResolve=null; } }, 4000);
     // If startSync was queued before Firebase was ready, run it now
     if(currentUserId){ startSync(); }
     // handleInviteLink is triggered by onUserSignedIn — don't call here (no currentUserId yet)
@@ -2642,24 +2662,15 @@ function _initFirebase(){
     // ── Handle mobile redirect sign-in result ──
     auth.getRedirectResult().then(result=>{
       if(result && result.user){
-        const user = result.user;
-        const name  = user.displayName || 'Tracker';
-        const email = user.email || '';
-        const photo = user.photoURL || null;
-        console.log('[Auth] getRedirectResult: signed in as', email);
-        localStorage.setItem('tc_google_user', JSON.stringify({name, email, photo}));
-        window._pendingGoogleUser = null;
-        onUserSignedIn(name, email, photo);
-        closeLoginModal();
-        const wasOnLanding = !document.getElementById('landing').classList.contains('hidden');
-        if(wasOnLanding) goToApp();
-        showToast('✅ Signed in as ' + name + '!', 3000);
-        if(_inviteGroupId) handleInviteLink();
-        setTimeout(()=>addNotification('login','✅','Signed In with Google',`Welcome back, ${name}! (${email})`),1200);
+        // Firebase is now fully authenticated — _onFirebaseGoogleUser handles everything
+        _onFirebaseGoogleUser(result.user);
       }
     }).catch(e=>{
       if(e && e.code !== 'auth/no-auth-event'){
-        console.warn('[Auth] getRedirectResult error:',e);
+        console.warn('[Auth] getRedirectResult error:',e.code, e.message);
+        if(e.code !== 'auth/user-cancelled'){
+          showToast('❌ Google sign-in error: '+(e.message||e.code), 4000);
+        }
       }
     });
   }catch(e){
@@ -2677,19 +2688,19 @@ function fsColl(p){ return db.collection(_fsPath(p)); }
 
 function fsSet(path,data){
   if(!firebaseReady||!currentUserId)return;
-  fsDoc(path).set(data,{merge:true}).catch(e=>console.warn('fsSet',e));
+  _authReady.then(()=>fsDoc(path).set(data,{merge:true}).catch(e=>console.warn('fsSet',e)));
 }
 function fsGet(path){
   if(!firebaseReady||!currentUserId)return Promise.resolve(null);
-  return fsDoc(path).get().then(s=>s.exists?s.data():null).catch(()=>null);
+  return _authReady.then(()=>fsDoc(path).get().then(s=>s.exists?s.data():null).catch(()=>null));
 }
 function fsSetIn(coll,id,data){
   if(!firebaseReady||!currentUserId)return;
-  fsColl(coll).doc(id).set(data,{merge:true}).catch(e=>console.warn('fsSetIn',e));
+  _authReady.then(()=>fsColl(coll).doc(id).set(data,{merge:true}).catch(e=>console.warn('fsSetIn',e)));
 }
 function fsDelFrom(coll,id){
   if(!firebaseReady||!currentUserId)return;
-  fsColl(coll).doc(id).delete().catch(e=>console.warn('fsDelFrom',e));
+  _authReady.then(()=>fsColl(coll).doc(id).delete().catch(e=>console.warn('fsDelFrom',e)));
 }
 
 // ── Shared group helpers (top-level collection, not under any user path) ──
@@ -2788,9 +2799,16 @@ function stopSync(){
 
 function startSync(){
   if(!firebaseReady||!currentUserId){ 
-    // Retry until both are ready — needed for mobile redirect sign-in timing
     setTimeout(startSync, 400); return; 
   }
+  // Wait for confirmed auth state before opening Firestore listeners
+  // This prevents "missing or insufficient permissions" on first load
+  _authReady.then(()=>{
+    _doStartSync();
+  });
+}
+function _doStartSync(){
+  if(!firebaseReady||!currentUserId) return;
   stopSync();
   setSyncBadge('syncing');
 
@@ -3012,113 +3030,72 @@ function handleInviteLink() {
   }
 }
 
-const GOOGLE_CLIENT_ID = '731869460805-5h6iernb17fnpi59151be85jaq3cubc1.apps.googleusercontent.com';
-// Parse the JWT credential returned by Google
-function parseJwt(token){
-  try{
-    const base64Url=token.split('.')[1];
-    const base64=base64Url.replace(/-/g,'+').replace(/_/g,'/');
-    const json=decodeURIComponent(atob(base64).split('').map(c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''));
-    return JSON.parse(json);
-  }catch(e){return null;}
-}
-
-// Called by GIS after the user picks a Google account
-function handleGoogleCredential(response){
-  document.getElementById('_gisOverlay').style.display = 'none';
-  const payload = parseJwt(response.credential);
-  if(!payload){showToast('❌ Google sign-in failed. Please try again.',3500);return;}
-  const name  = payload.name  || payload.given_name || 'Tracker';
-  const email = payload.email || '';
-  const photo = payload.picture || null;
+// ── Shared: handle a signed-in Firebase user (from popup or redirect) ──
+function _onFirebaseGoogleUser(user){
+  if(!user) return;
+  const name  = user.displayName || 'Tracker';
+  const email = user.email || '';
+  const photo = user.photoURL || null;
+  console.log('[Auth] Google user signed in:', email, '| uid:', user.uid);
   localStorage.setItem('tc_google_user', JSON.stringify({name, email, photo}));
-  // Clear any stale cached session so it never overwrites this fresh login
   window._pendingGoogleUser = null;
+  // _authReady resolves via onAuthStateChanged — just call app logic here
   onUserSignedIn(name, email, photo);
   closeLoginModal();
-  // Go to app if on landing
   const wasOnLanding = !document.getElementById('landing').classList.contains('hidden');
   if(wasOnLanding) goToApp();
   showToast('✅ Signed in as ' + name + '!', 3000);
-  // Trigger invite handling — function self-retries until Firebase + auth are ready
-  if(_inviteGroupId){
-    handleInviteLink();
-  }
-  // Fire login notification
+  if(_inviteGroupId) handleInviteLink();
   setTimeout(()=>addNotification('login','✅','Signed In with Google',`Welcome back, ${name}! (${email})`),1200);
 }
-
-// Initialise GIS and render button directly on the landing page
-function initGIS(){
-  if(!window.google || !window.google.accounts) return false;
-  google.accounts.id.initialize({
-    client_id: GOOGLE_CLIENT_ID,
-    callback: handleGoogleCredential,
-    auto_select: false,
-    cancel_on_tap_outside: true
-  });
-  // Render the real Google button directly into the landing page container
-  const container = document.getElementById('googleSignInBtn');
-  if(container){
-    google.accounts.id.renderButton(container, {
-      type: 'standard',
-      theme: 'outline',
-      size: 'large',
-      text: 'continue_with',
-      width: 280,
-      logo_alignment: 'left'
-    });
-  }
-  return true;
-}
-// Run immediately (script is synchronous) and again on window load as safety net
-let _gisInited = initGIS();
-window.addEventListener('load', ()=>{ if(!_gisInited) _gisInited = initGIS(); });
 
 // Detect mobile browsers
 function _isMobile(){
   return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth <= 768;
 }
 
-// signInWithGoogle — uses redirect on mobile (reliable), popup/GIS on desktop
+// ── Main sign-in entry point ──
+// Mobile  → signInWithRedirect  (page redirects to Google, returns with session)
+// Desktop → signInWithPopup     (opens a popup window, stays on page)
 function signInWithGoogle(){
-  // ── MOBILE: use Firebase signInWithRedirect ──
+  if(!firebaseReady || !auth){
+    showToast('⏳ Still connecting… please try again.',3000);
+    setTimeout(signInWithGoogle, 1000);
+    return;
+  }
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.addScope('email');
+  provider.addScope('profile');
+
   if(_isMobile()){
-    if(!firebaseReady || !auth){
-      showToast('⏳ Still connecting, please try again in a moment.',3000);
-      setTimeout(signInWithGoogle, 1200);
-      return;
-    }
-    try{
-      const provider = new firebase.auth.GoogleAuthProvider();
-      provider.addScope('email');
-      provider.addScope('profile');
-      showToast('🔄 Redirecting to Google…',2000);
-      auth.signInWithRedirect(provider);
-    }catch(e){
+    // ── MOBILE: full-page redirect ──
+    showToast('🔄 Redirecting to Google…', 2000);
+    auth.signInWithRedirect(provider).catch(e=>{
       console.warn('[Auth] signInWithRedirect failed:',e);
-      showToast('❌ Could not start Google Sign-In. Please try again.',3500);
-    }
-    return;
+      showToast('❌ Could not open Google Sign-In: '+e.message, 4000);
+    });
+  } else {
+    // ── DESKTOP: popup ──
+    auth.signInWithPopup(provider)
+      .then(result=>{ _onFirebaseGoogleUser(result.user); })
+      .catch(e=>{
+        console.warn('[Auth] signInWithPopup failed:',e);
+        if(e.code==='auth/popup-blocked'){
+          showToast('🚫 Popup blocked — trying redirect instead…',3000);
+          auth.signInWithRedirect(provider).catch(()=>{});
+        } else if(e.code==='auth/popup-closed-by-user'){
+          showToast('ℹ️ Sign-in cancelled.',2000);
+        } else {
+          showToast('❌ Sign-in failed: '+(e.message||e.code),4000);
+        }
+      });
   }
-  // ── DESKTOP: use GIS popup as before ──
-  if(!_gisInited) _gisInited = initGIS();
-  if(!window.google || !window.google.accounts){
-    showToast('⏳ Google Sign-In is still loading, please try again.',3000);
-    return;
-  }
-  const container = document.getElementById('_gisButtonContainer');
-  container.innerHTML = '';
-  google.accounts.id.renderButton(container, {
-    type: 'standard',
-    theme: 'outline',
-    size: 'large',
-    text: 'signin_with',
-    width: 280,
-    logo_alignment: 'left'
-  });
-  document.getElementById('_gisOverlay').style.display = 'flex';
 }
+
+// GIS stubs — kept so any existing HTML onclick="initGIS()" references don't break
+function initGIS(){ return true; }
+function handleGoogleCredential(response){ console.log('[GIS] credential received but using Firebase Auth instead'); }
+let _gisInited = true;
 
 // Restore Google session on page reload
 (function restoreGoogleSession(){
@@ -4413,30 +4390,43 @@ function _fileToBase64Firestore(file){
 // For small files: save inline. For large files: split into chunks.
 const _CHUNK_SIZE = 700 * 1024; // 700KB per chunk (in chars)
 
+// Helper: Firestore write with 15s timeout
+function _fsWriteWithTimeout(promise, label){
+  return new Promise((res, rej)=>{
+    const t = setTimeout(()=>rej(new Error('Firestore write timed out: '+label)), 15000);
+    promise.then(v=>{ clearTimeout(t); res(v); }).catch(e=>{ clearTimeout(t); rej(e); });
+  });
+}
+
 async function _saveLibToFirestore(fid, fobj, b64){
-  if(!firebaseReady || !currentUserId) throw new Error('Not ready');
+  if(!firebaseReady || !currentUserId) throw new Error('Firebase not ready');
+  // Wait for auth (with built-in 4s fallback so it never hangs)
+  await _authReady;
   const meta = {
     id: fid, name: fobj.name, type: fobj.type, mime: fobj.mime,
     size: fobj.size, bytes: fobj.bytes, date: fobj.date, updatedAt: Date.now()
   };
   if(b64.length <= _CHUNK_SIZE){
-    // Small enough — save inline
-    await fsColl('library').doc(fid).set({...meta, data: b64, chunked: false}, {merge:false});
+    // Save inline — single document
+    await _fsWriteWithTimeout(
+      fsColl('library').doc(fid).set({...meta, data: b64, chunked: false}),
+      'library/'+fid
+    );
   } else {
-    // Split into chunks
+    // Split into chunks and batch-write
     const chunks = [];
     for(let i=0; i < b64.length; i += _CHUNK_SIZE){
       chunks.push(b64.slice(i, i + _CHUNK_SIZE));
     }
-    // Save each chunk as a sub-document
     const batch = db.batch();
     chunks.forEach((chunk, i)=>{
-      const ref = fsColl('library').doc(fid).collection('chunks').doc('c'+i);
-      batch.set(ref, {index: i, data: chunk});
+      batch.set(fsColl('library').doc(fid).collection('chunks').doc('c'+i), {index:i, data:chunk});
     });
-    await batch.commit();
-    // Save meta with chunked flag (no inline data)
-    await fsColl('library').doc(fid).set({...meta, data:'', chunked: true, chunkCount: chunks.length}, {merge:false});
+    await _fsWriteWithTimeout(batch.commit(), 'chunks batch');
+    await _fsWriteWithTimeout(
+      fsColl('library').doc(fid).set({...meta, data:'', chunked:true, chunkCount:chunks.length}),
+      'library/'+fid+' meta'
+    );
   }
 }
 
@@ -4474,8 +4464,8 @@ function handleLibUpload(e){
 
       fobj._uploadPct = 50; renderLib();
 
-      // Step 2: Wait for Firebase to be ready
-      await new Promise(res=>{ const w=()=>{ if(firebaseReady&&currentUserId) res(); else setTimeout(w,400); }; w(); });
+      // Step 2: Wait for Firebase + userId (auth handled inside _saveLibToFirestore)
+      await new Promise(res=>{ const w=()=>{ if(firebaseReady&&currentUserId) res(); else setTimeout(w,300); }; w(); });
 
       fobj._uploadPct = 70; renderLib();
 
@@ -4494,7 +4484,18 @@ function handleLibUpload(e){
       const idx = libFiles.indexOf(fobj);
       if(idx >= 0){ libFiles.splice(idx, 1); }
       renderLib(); updateLibStorageBar();
-      showToast('❌ Could not save "'+file.name+'": '+err.message, 4000);
+      // Give specific guidance based on error type
+      let msg = '❌ Upload failed: ';
+      if(err.message && err.message.includes('timed out')){
+        msg += 'Connection timed out. Check your internet and try again.';
+      } else if(err.code === 'permission-denied' || (err.message && err.message.includes('permission'))){
+        msg += 'Permission denied. Make sure you are signed in.';
+      } else if(err.code === 'unavailable'){
+        msg += 'Firestore offline. Check your connection.';
+      } else {
+        msg += (err.message || err.code || 'Unknown error');
+      }
+      showToast(msg, 5000);
     }
   });
   e.target.value = '';
@@ -4716,7 +4717,7 @@ function handleLogout(){if(confirm('Are you sure you want to log out?')){
   calTasks={};activityEntries=[];groupTasksStore=[];libFiles=[];selectedDate=null;
   if(firebaseReady&&auth)auth.signOut().catch(()=>{});
   localStorage.removeItem('tc_google_user');
-  if(window.google&&window.google.accounts)google.accounts.id.revoke('',()=>{});
+  // GIS removed — no revoke needed
   // Reset all avatar/name UI so previous user's data never bleeds into next session
   ['avatarBtnInner','sidebarAvatarInner','profileAvatarInner'].forEach(id=>{
     const el=document.getElementById(id);
