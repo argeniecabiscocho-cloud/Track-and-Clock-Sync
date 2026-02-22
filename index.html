@@ -2638,6 +2638,33 @@ function _initFirebase(){
     // If startSync was queued before Firebase was ready, run it now
     if(currentUserId) startSync();
     // handleInviteLink is triggered by onUserSignedIn — don't call here (no currentUserId yet)
+
+    // ── Handle mobile redirect sign-in result ──
+    auth.getRedirectResult().then(result=>{
+      if(result && result.user){
+        const user = result.user;
+        const name  = user.displayName || 'Tracker';
+        const email = user.email || '';
+        const photo = user.photoURL || null;
+        console.log('[Auth] getRedirectResult: signed in as', email);
+        localStorage.setItem('tc_google_user', JSON.stringify({name, email, photo}));
+        window._pendingGoogleUser = null;
+        onUserSignedIn(name, email, photo);
+        closeLoginModal();
+        const wasOnLanding = !document.getElementById('landing').classList.contains('hidden');
+        if(wasOnLanding) goToApp();
+        showToast('✅ Signed in as ' + name + '!', 3000);
+        if(_inviteGroupId) handleInviteLink();
+        setTimeout(()=>addNotification('login','✅','Signed In with Google',`Welcome back, ${name}! (${email})`),1200);
+      }
+    }).catch(e=>{
+      if(e.code !== 'auth/no-auth-event'){
+        console.warn('[Auth] getRedirectResult error:',e);
+        if(e.code === 'auth/popup-blocked' || e.message){
+          showToast('❌ Google Sign-In failed: ' + (e.message||e.code), 4000);
+        }
+      }
+    });
   }catch(e){
     console.warn('[Firebase] Init failed:',e);
     setTimeout(_initFirebase, 500);
@@ -3032,8 +3059,33 @@ function initGIS(){
 let _gisInited = initGIS();
 window.addEventListener('load', ()=>{ if(!_gisInited) _gisInited = initGIS(); });
 
-// signInWithGoogle kept for other buttons (login modal etc)
+// Detect mobile browsers
+function _isMobile(){
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth <= 768;
+}
+
+// signInWithGoogle — uses redirect on mobile (reliable), popup/GIS on desktop
 function signInWithGoogle(){
+  // ── MOBILE: use Firebase signInWithRedirect ──
+  if(_isMobile()){
+    if(!firebaseReady || !auth){
+      showToast('⏳ Still connecting, please try again in a moment.',3000);
+      setTimeout(signInWithGoogle, 1200);
+      return;
+    }
+    try{
+      const provider = new firebase.auth.GoogleAuthProvider();
+      provider.addScope('email');
+      provider.addScope('profile');
+      showToast('🔄 Redirecting to Google…',2000);
+      auth.signInWithRedirect(provider);
+    }catch(e){
+      console.warn('[Auth] signInWithRedirect failed:',e);
+      showToast('❌ Could not start Google Sign-In. Please try again.',3500);
+    }
+    return;
+  }
+  // ── DESKTOP: use GIS popup as before ──
   if(!_gisInited) _gisInited = initGIS();
   if(!window.google || !window.google.accounts){
     showToast('⏳ Google Sign-In is still loading, please try again.',3000);
@@ -4370,29 +4422,8 @@ const filtered=libFilter==='all'?libFiles:libFiles.filter(f=>_libFileType(f)===l
     el.onclick=()=>previewFile(idx);grid.appendChild(el);
   });
 }
-function fsDelLib(f){
-  if(!firebaseReady||!currentUserId)return;
-  // Delete Firestore metadata
-  fsDelFrom('library',f.id);
-  // Delete from Firebase Storage
-  if(storage&&f.id){
-    try{storage.ref('users/'+currentUserId+'/library/'+f.id).delete().catch(()=>{});}catch(e){}
-  }
-}
-function fsRestoreLib(f){
-  if(!firebaseReady||!currentUserId)return;
-  fsSetIn('library',f.id,{id:f.id,name:f.name,type:f.type,mime:f.mime,
-    size:f.size,bytes:f.bytes||0,date:f.date,cloudUrl:f.cloudUrl||f.data||'',updatedAt:Date.now()});
-}
 function delLib(idx,e){
-  e.stopPropagation();
-  const f=libFiles[idx];
-  lastDeleted={file:f,idx};
-  libFiles.splice(idx,1);
-  renderLib();
-  updateLibStorageBar();
-  fsDelLib(f);
-  showUndoToast();
+  e.stopPropagation();lastDeleted={file:libFiles[idx],idx};libFiles.splice(idx,1);renderLib();showUndoToast();
 }
 let toastEl=null;
 function showUndoToast(){
@@ -4403,15 +4434,7 @@ function showUndoToast(){
   undoTimer=setTimeout(()=>{if(toastEl){toastEl.classList.add('hide');setTimeout(()=>{if(toastEl){toastEl.remove();toastEl=null;}},300);}},5000);
 }
 function undoDelete(){
-  if(lastDeleted){
-    const f=lastDeleted.file;
-    libFiles.splice(lastDeleted.idx,0,f);
-    fsRestoreLib(f);
-    lastDeleted=null;renderLib();updateLibStorageBar();
-    if(toastEl){toastEl.remove();toastEl=null;}
-    if(undoTimer)clearTimeout(undoTimer);
-    showToast('✅ File restored!',2000);
-  }
+  if(lastDeleted){libFiles.splice(lastDeleted.idx,0,lastDeleted.file);lastDeleted=null;renderLib();if(toastEl){toastEl.remove();toastEl=null;}if(undoTimer)clearTimeout(undoTimer);showToast('✅ File restored!',2000);}
 }
 function showToast(msg,dur=2500){const t=document.createElement('div');t.className='undo-toast';t.innerHTML=`<span>${msg}</span>`;document.body.appendChild(t);setTimeout(()=>{t.classList.add('hide');setTimeout(()=>t.remove(),300);},dur);}
 function previewFile(idx){
