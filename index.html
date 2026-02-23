@@ -625,7 +625,7 @@ body{font-family:'Quicksand',sans-serif;font-size:var(--base-font);min-height:10
 
 /* AVATAR */
 .modal-overlay{position:fixed;inset:0;z-index:100;background:rgba(100,80,150,0.2);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;transition:opacity 0.3s;}
-.modal-overlay.hidden{opacity:0;pointer-events:none;}
+.modal-overlay.hidden{display:none;}
 .avatar-modal{background:rgba(255,255,255,0.92);border-radius:26px;padding:22px;width:435px;max-width:95vw;max-height:92vh;overflow-y:auto;box-shadow:0 24px 60px rgba(100,80,150,0.22);border:2px solid rgba(200,180,240,0.4);animation:cardPop 0.4s cubic-bezier(.34,1.56,.64,1) both;}
 .modal-title{font-family:'Nunito',sans-serif;font-weight:800;font-size:1.12rem;margin-bottom:14px;color:#3d3260;}
 .avatar-builder{display:flex;gap:16px;align-items:flex-start;}
@@ -7957,33 +7957,7 @@ function cancelTwoFAVerify(){
   showToast('Sign-in cancelled — 2FA verification was not completed.',3500);
 }
 
-// ─────────────────────────────────────────────────
-// HOOK 2FA INTO SIGN-IN FLOW
-// Wraps _onFirebaseGoogleUser to intercept after auth
-// and gate the app entry on 2FA if enabled.
-// ─────────────────────────────────────────────────
-const _orig_onFBGUser = window._onFirebaseGoogleUser;
-window._onFirebaseGoogleUser = function(user){
-  if(!user) return;
-  const name=user.displayName||'Tracker';
-  const email=user.email||'';
-  const photo=user.photoURL||null;
-  // Set userId immediately so _load2FAState can use it
-  currentUserId=email?email.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase():name.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase();
-  // Save to localStorage
-  localStorage.setItem('tc_google_user',JSON.stringify({name,email,photo}));
-  window._pendingGoogleUser=null;
-  // Check 2FA before entering app
-  _check2FAOnLogin(()=>{
-    onUserSignedIn(name,email,photo);
-    closeLoginModal();
-    const wasOnLanding=!document.getElementById('landing').classList.contains('hidden');
-    if(wasOnLanding) goToApp();
-    showToast('✅ Signed in as '+name+'!',3000);
-    if(window._inviteGroupId) handleInviteLink();
-    setTimeout(()=>addNotification('login','✅','Signed In with Google','Welcome back, '+name+'! ('+email+')'),1200);
-  });
-};
+// Sign-in hook is defined in the Email OTP script below (chains Email OTP → TOTP 2FA → app)
 
 // Load security state after user signs in (updates badges, session info)
 const _origOUS=window.onUserSignedIn;
@@ -8018,7 +7992,7 @@ window.onUserSignedIn=function(name,email,photo){
 // This is safe to expose client-side — EmailJS enforces domain whitelisting.
 const _EMAILJS_SERVICE  = 'service_lhqs6ii';
 const _EMAILJS_TEMPLATE = 'template_9n7pv4i';
-const _EMAILJS_PUBLIC   = 'IPWui26Np7R_HxPFe'; // ← replace after setup
+const _EMAILJS_PUBLIC   = 'IPWui26Np7R_HxPFe';
 
 // Load EmailJS SDK lazily
 function _loadEmailJS(){
@@ -8273,39 +8247,32 @@ function cancelEmailOTPVerify(){
   showToast('Sign-in cancelled — email verification was not completed.',3500);
 }
 
-// ── Hook Email OTP into the sign-in flow ──
-// Runs AFTER 2FA check (both can be active at once)
-const _orig2FAWrapper = window._onFirebaseGoogleUser;
+// ── SINGLE definitive sign-in handler ──
+// Chain: Email OTP → TOTP 2FA → enter app
 window._onFirebaseGoogleUser = function(user){
   if(!user) return;
-  const name=user.displayName||'Tracker';
-  const email=user.email||'';
-  const photo=user.photoURL||null;
-  currentUserId=email?email.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase():name.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase();
-  localStorage.setItem('tc_google_user',JSON.stringify({name,email,photo}));
-  window._pendingGoogleUser=null;
+  const name  = user.displayName || 'Tracker';
+  const email = user.email || '';
+  const photo = user.photoURL || null;
+  currentUserId = email
+    ? email.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase()
+    : name.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase();
+  localStorage.setItem('tc_google_user', JSON.stringify({name,email,photo}));
+  window._pendingGoogleUser = null;
 
-  // Chain: Email OTP → TOTP 2FA → enter app
-  // Email OTP runs first (send code to email)
-  // Then TOTP 2FA if also enabled
-  // Then finally enter the app
-  const enterApp=()=>{
-    onUserSignedIn(name,email,photo);
+  const enterApp = () => {
+    onUserSignedIn(name, email, photo);
     closeLoginModal();
-    const wasOnLanding=!document.getElementById('landing').classList.contains('hidden');
-    if(wasOnLanding) goToApp();
-    showToast('✅ Signed in as '+name+'!',3000);
+    if(!document.getElementById('landing').classList.contains('hidden')) goToApp();
+    showToast('✅ Signed in as '+name+'!', 3000);
     if(window._inviteGroupId) handleInviteLink();
     setTimeout(()=>addNotification('login','✅','Signed In with Google','Welcome back, '+name+'! ('+email+')'),1200);
   };
 
-  const afterEmailOTP=()=>{
-    // Check TOTP 2FA second
-    _check2FAOnLogin(enterApp);
-  };
-
-  // Check Email OTP first
-  _checkEmailOTPOnLogin(email, afterEmailOTP);
+  // Step 1: Email OTP (if enabled)
+  // Step 2: TOTP 2FA (if enabled)
+  // Step 3: Enter app
+  _checkEmailOTPOnLogin(email, () => _check2FAOnLogin(enterApp));
 };
 </script>
 
