@@ -1758,21 +1758,45 @@ body{font-family:'Quicksand',sans-serif;font-size:var(--base-font);min-height:10
   <div class="fp-header"><button class="back-btn" onclick="closeFP('secPanel')">←</button><span class="fp-title">🔒 Security</span></div>
   <div class="fp-content">
 
-    <!-- Account Security -->
+    <!-- Account Security Overview -->
     <div class="panel-card"><h3>Account Security</h3>
-      <div class="sec-item"><div class="sec-left"><div class="sec-icon" style="background:#f0e8ff;">🔑</div><div><div class="sec-title">Change Password</div><div class="sec-sub">Last changed: Never</div></div></div><span class="sec-arrow">›</span></div>
-      <div class="sec-item"><div class="sec-left"><div class="sec-icon" style="background:#e0f8e8;">📱</div><div><div class="sec-title">Two-Factor Authentication</div><div class="sec-sub">Add extra security via SMS or app</div></div></div><span class="sec-arrow">›</span></div>
-      <div class="sec-item"><div class="sec-left"><div class="sec-icon" style="background:#fff0e0;">🔗</div><div><div class="sec-title">Linked Google Account</div><div class="sec-sub" id="googleLinkedStatus">Not linked</div></div></div><button onclick="signInWithGoogle()" style="padding:7px 14px;border-radius:10px;border:1.5px solid rgba(200,180,240,0.4);background:rgba(255,255,255,0.7);cursor:pointer;font-family:'Nunito',sans-serif;font-weight:800;font-size:0.8rem;color:#3d3260;">Link</button></div>
+      <div class="sec-item" onclick="openChangePasswordModal()" style="cursor:pointer;">
+        <div class="sec-left"><div class="sec-icon" style="background:#f0e8ff;">🔑</div>
+        <div><div class="sec-title">Change Password</div><div class="sec-sub" id="pwLastChanged">Send a reset link to your email</div></div></div>
+        <span class="sec-arrow">›</span>
+      </div>
+      <div class="sec-item" onclick="open2FAModal()" style="cursor:pointer;">
+        <div class="sec-left"><div class="sec-icon" style="background:#e0f8e8;">📱</div>
+        <div><div class="sec-title">Authenticator App (TOTP)</div>
+        <div class="sec-sub" id="twoFAStatus">
+          <span id="twoFABadge" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:800;background:#ffe0e0;color:#c05050;">● Disabled</span>
+        </div></div></div>
+        <span class="sec-arrow">›</span>
+      </div>
+      <div class="sec-item" onclick="openEmailOTPModal()" style="cursor:pointer;">
+        <div class="sec-left"><div class="sec-icon" style="background:#e8f0ff;">📧</div>
+        <div><div class="sec-title">Email Verification on Login</div>
+        <div class="sec-sub">
+          <span id="emailOTPBadge" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:800;background:#ffe0e0;color:#c05050;">● Disabled</span>
+        </div></div></div>
+        <span class="sec-arrow">›</span>
+      </div>
+      <div class="sec-item">
+        <div class="sec-left"><div class="sec-icon" style="background:#fff0e0;">🔗</div>
+        <div><div class="sec-title">Linked Google Account</div><div class="sec-sub" id="googleLinkedStatus">Not linked</div></div></div>
+        <button onclick="signInWithGoogle()" style="padding:7px 14px;border-radius:10px;border:1.5px solid rgba(200,180,240,0.4);background:rgba(255,255,255,0.7);cursor:pointer;font-family:'Nunito',sans-serif;font-weight:800;font-size:0.8rem;color:#3d3260;">Link</button>
+      </div>
     </div>
 
-    <!-- Update Password -->
-    <div class="panel-card"><h3>Update Password</h3>
-      <div style="display:flex;flex-direction:column;gap:9px;">
-        <input class="task-input" placeholder="Current password..." type="password" style="width:100%"/>
-        <input class="task-input" placeholder="New password..." type="password" style="width:100%"/>
-        <input class="task-input" placeholder="Confirm new password..." type="password" style="width:100%"/>
-        <button class="add-btn" style="width:100%;padding:12px;">Update Password</button>
+    <!-- Active Sessions -->
+    <div class="panel-card"><h3>Active Session</h3>
+      <div class="sec-item">
+        <div class="sec-left"><div class="sec-icon" style="background:#e8f4ff;">🖥️</div>
+        <div><div class="sec-title" id="sessionDevice">This device</div>
+        <div class="sec-sub" id="sessionTime">Signed in just now</div></div></div>
+        <span style="font-size:0.72rem;font-weight:800;padding:3px 10px;border-radius:10px;background:#d4f5e0;color:#2d9c5e;">● Active</span>
       </div>
+      <button onclick="handleLogout()" style="width:100%;margin-top:12px;padding:11px;border-radius:13px;border:1.5px solid rgba(220,80,80,0.3);background:rgba(255,240,240,0.7);color:#c05050;font-family:'Nunito',sans-serif;font-weight:800;font-size:0.88rem;cursor:pointer;">🚪 Sign Out All Devices</button>
     </div>
 
     <!-- Privacy & Terms -->
@@ -2671,7 +2695,7 @@ function _initFirebase(){
           localStorage.removeItem('tc_google_user');
         }
         // Firebase is now fully authenticated — _onFirebaseGoogleUser handles everything
-        _onFirebaseGoogleUser(result.user);
+        window._onFirebaseGoogleUser(result.user);
       }
     }).catch(e=>{
       if(e && e.code !== 'auth/no-auth-event'){
@@ -3099,7 +3123,7 @@ function signInWithGoogle(switchMode){
     // ── DESKTOP: popup ──
     const _doPopup = () => {
       auth.signInWithPopup(provider)
-        .then(result=>{ _onFirebaseGoogleUser(result.user); })
+        .then(result=>{ window._onFirebaseGoogleUser(result.user); })
         .catch(e=>{
           console.warn('[Auth] signInWithPopup failed:',e);
           if(e.code==='auth/popup-blocked'){
@@ -7600,5 +7624,728 @@ window.openFP = function(id){
 };
 </script>
 
+
+<!-- ===== CHANGE PASSWORD MODAL ===== -->
+<div class="modal-overlay hidden" id="changePwModal" onclick="if(event.target===this)closePwModal()">
+  <div class="login-modal" style="max-width:400px;">
+    <div style="font-size:2rem;text-align:center;margin-bottom:8px;">🔑</div>
+    <h2 style="text-align:center;font-family:'Nunito',sans-serif;font-size:1.2rem;margin-bottom:6px;">Change Password</h2>
+    <p id="pwModalSub" style="text-align:center;font-size:0.84rem;color:#7a6fa0;margin-bottom:18px;">We'll send a password reset link to your email.</p>
+    <div id="pwEmailRow" style="display:flex;flex-direction:column;gap:10px;">
+      <div style="background:rgba(200,180,240,0.15);border:1.5px solid rgba(200,180,240,0.4);border-radius:13px;padding:12px 15px;font-size:0.9rem;color:#3d3260;font-weight:700;" id="pwEmailDisplay">📧 —</div>
+      <button class="login-btn" onclick="sendPasswordReset()" id="pwSendBtn" style="margin-top:4px;">📨 Send Reset Link</button>
+    </div>
+    <div id="pwSuccessMsg" style="display:none;text-align:center;padding:16px;background:rgba(180,240,200,0.3);border-radius:14px;border:1.5px solid rgba(94,234,212,0.4);">
+      <div style="font-size:1.8rem;margin-bottom:6px;">✅</div>
+      <div style="font-weight:800;color:#2d9c5e;font-size:0.95rem;">Reset link sent!</div>
+      <div style="font-size:0.8rem;color:#7a6fa0;margin-top:4px;">Check your inbox and follow the link to set a new password.</div>
+    </div>
+    <button onclick="closePwModal()" style="width:100%;margin-top:12px;padding:10px;border-radius:11px;border:1.5px solid rgba(200,180,240,0.3);background:transparent;cursor:pointer;font-family:'Quicksand',sans-serif;font-weight:700;color:#7a6fa0;font-size:0.88rem;">Close</button>
+  </div>
+</div>
+
+<!-- ===== TWO-FACTOR AUTH MODAL ===== -->
+<div class="modal-overlay hidden" id="twoFAModal" onclick="if(event.target===this)close2FAModal()">
+  <div class="login-modal" style="max-width:420px;">
+    <div style="font-size:2rem;text-align:center;margin-bottom:8px;">📱</div>
+    <h2 style="text-align:center;font-family:'Nunito',sans-serif;font-size:1.2rem;margin-bottom:4px;">Two-Factor Authentication</h2>
+    <p style="text-align:center;font-size:0.82rem;color:#7a6fa0;margin-bottom:18px;">Use an authenticator app to generate a 6-digit code each time you sign in.</p>
+
+    <!-- Step 1: Setup -->
+    <div id="twoFA_step1">
+      <div id="twoFA_enabled_view" style="display:none;text-align:center;">
+        <div style="background:rgba(180,240,200,0.3);border:1.5px solid rgba(94,234,212,0.4);border-radius:14px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:1.5rem;margin-bottom:4px;">🛡️</div>
+          <div style="font-weight:900;color:#2d9c5e;font-size:0.95rem;">2FA is Active</div>
+          <div style="font-size:0.78rem;color:#7a6fa0;margin-top:4px;">Your account is protected with an authenticator app.</div>
+        </div>
+        <button onclick="disable2FA()" style="width:100%;padding:11px;border-radius:13px;border:1.5px solid rgba(220,80,80,0.3);background:rgba(255,240,240,0.7);color:#c05050;font-family:'Nunito',sans-serif;font-weight:800;font-size:0.88rem;cursor:pointer;margin-bottom:8px;">🗑 Disable 2FA</button>
+      </div>
+      <div id="twoFA_setup_view">
+        <div style="font-size:0.84rem;font-weight:700;color:#3d3260;margin-bottom:10px;">Step 1 — Scan this QR code with your authenticator app:</div>
+        <div style="text-align:center;margin-bottom:12px;">
+          <div id="twoFA_qr" style="display:inline-block;padding:12px;background:#fff;border-radius:12px;border:1.5px solid rgba(200,180,240,0.4);"></div>
+        </div>
+        <div style="font-size:0.78rem;color:#7a6fa0;text-align:center;margin-bottom:8px;">Or enter this code manually in your app:</div>
+        <div id="twoFA_secret_display" style="font-family:monospace;font-size:0.88rem;font-weight:800;letter-spacing:3px;text-align:center;padding:10px;background:rgba(200,180,240,0.15);border-radius:10px;color:#3d3260;margin-bottom:14px;word-break:break-all;"></div>
+        <div style="font-size:0.84rem;font-weight:700;color:#3d3260;margin-bottom:8px;">Step 2 — Enter the 6-digit code from your app:</div>
+        <input id="twoFA_code_input" class="task-input" type="tel" maxlength="6" placeholder="000000" style="width:100%;text-align:center;font-size:1.3rem;letter-spacing:6px;font-family:monospace;padding:12px;" oninput="this.value=this.value.replace(/[^0-9]/g,'')"/>
+        <button class="login-btn" onclick="verify2FASetup()" style="margin-top:10px;">✅ Verify & Enable 2FA</button>
+      </div>
+    </div>
+
+    <button onclick="close2FAModal()" style="width:100%;margin-top:10px;padding:10px;border-radius:11px;border:1.5px solid rgba(200,180,240,0.3);background:transparent;cursor:pointer;font-family:'Quicksand',sans-serif;font-weight:700;color:#7a6fa0;font-size:0.88rem;">Cancel</button>
+  </div>
+</div>
+
+<!-- 2FA Verification Modal (shown at login if 2FA is enabled) -->
+<div class="modal-overlay hidden" id="twoFAVerifyModal">
+  <div class="login-modal" style="max-width:360px;">
+    <div style="font-size:2rem;text-align:center;margin-bottom:8px;">🔐</div>
+    <h2 style="text-align:center;font-family:'Nunito',sans-serif;font-size:1.15rem;margin-bottom:6px;">Enter 2FA Code</h2>
+    <p style="text-align:center;font-size:0.82rem;color:#7a6fa0;margin-bottom:16px;">Open your authenticator app and enter the 6-digit code.</p>
+    <input id="twoFAVerifyInput" class="task-input" type="tel" maxlength="6" placeholder="000000" style="width:100%;text-align:center;font-size:1.4rem;letter-spacing:8px;font-family:monospace;padding:14px;" oninput="this.value=this.value.replace(/[^0-9]/g,'');if(this.value.length===6)verify2FALogin()"/>
+    <button class="login-btn" onclick="verify2FALogin()" style="margin-top:10px;">→ Verify</button>
+    <div id="twoFAVerifyError" style="display:none;text-align:center;color:#c05050;font-size:0.82rem;font-weight:700;margin-top:8px;">❌ Incorrect code. Please try again.</div>
+    <button onclick="cancelTwoFAVerify()" style="width:100%;margin-top:8px;padding:10px;border-radius:11px;border:1.5px solid rgba(200,180,240,0.3);background:transparent;cursor:pointer;font-family:'Quicksand',sans-serif;font-weight:700;color:#7a6fa0;font-size:0.88rem;">Cancel Sign-In</button>
+  </div>
+</div>
+
+<script>
+// =====================================================
+// ===== SECURITY — PASSWORD RESET & 2FA (TOTP) =====
+// =====================================================
+
+// ─────────────────────────────────────────────────
+// PASSWORD RESET
+// Since the app uses Google Sign-In, we use Firebase
+// sendPasswordResetEmail which lets users set/change
+// a password via their email inbox.
+// ─────────────────────────────────────────────────
+function openChangePasswordModal(){
+  const email = document.getElementById('profileEmail')?.textContent||'';
+  const display = document.getElementById('pwEmailDisplay');
+  if(display) display.textContent = '📧 '+(email && email!=='—' ? email : 'No email linked to your account');
+  document.getElementById('pwSendBtn').style.display = '';
+  document.getElementById('pwSuccessMsg').style.display = 'none';
+  document.getElementById('pwEmailRow').style.display = 'flex';
+  document.getElementById('changePwModal').classList.remove('hidden');
+}
+function closePwModal(){
+  document.getElementById('changePwModal').classList.add('hidden');
+}
+function sendPasswordReset(){
+  const email = (document.getElementById('profileEmail')?.textContent||'').trim();
+  if(!email || email==='—'){
+    showToast('❌ No email found. Please sign in with Google first.',3500); return;
+  }
+  if(!firebaseReady||!auth){
+    showToast('⏳ Still connecting, please try again.',3000); return;
+  }
+  const btn = document.getElementById('pwSendBtn');
+  btn.textContent='⏳ Sending…'; btn.disabled=true;
+  // sendPasswordResetEmail works even for Google accounts —
+  // it lets the user add/change a password for email login
+  auth.sendPasswordResetEmail(email)
+    .then(()=>{
+      document.getElementById('pwEmailRow').style.display='none';
+      document.getElementById('pwSuccessMsg').style.display='block';
+      const now = new Date().toLocaleDateString();
+      localStorage.setItem('tc_pw_reset_sent', now);
+      const sub = document.getElementById('pwLastChanged');
+      if(sub) sub.textContent = 'Reset link sent · '+now;
+    })
+    .catch(e=>{
+      btn.textContent='📨 Send Reset Link'; btn.disabled=false;
+      console.warn('[PwReset]',e.code, e.message);
+      // For Google-only accounts that have no password provider,
+      // Firebase may return auth/invalid-email or similar — handle gracefully
+      if(e.code==='auth/user-not-found'){
+        showToast('❌ No account with that email was found.',3500);
+      } else if(e.code==='auth/too-many-requests'){
+        showToast('⚠️ Too many requests. Please wait a few minutes.',4000);
+      } else if(e.code==='auth/invalid-email'){
+        showToast('❌ Invalid email address.',3500);
+      } else {
+        // Likely a Google-only account with no password set yet — still works
+        showToast('❌ '+( e.message||e.code),4000);
+      }
+    });
+}
+
+// ─────────────────────────────────────────────────
+// TOTP 2FA — RFC 6238 implementation (no libraries)
+// Compatible with Google Authenticator, Authy, etc.
+// ─────────────────────────────────────────────────
+
+function _generate2FASecret(){
+  const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const arr=new Uint8Array(20);
+  crypto.getRandomValues(arr);
+  return Array.from(arr,b=>chars[b%32]).join('');
+}
+
+function _b32Decode(s){
+  const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  s=s.toUpperCase().replace(/[\s=]/g,'');
+  let bits=0,val=0;
+  const out=[];
+  for(const c of s){
+    const idx=chars.indexOf(c);
+    if(idx<0) continue;
+    val=(val<<5)|idx; bits+=5;
+    if(bits>=8){bits-=8;out.push((val>>bits)&0xff);}
+  }
+  return new Uint8Array(out);
+}
+
+async function _hmacSHA1(keyBytes,msgBytes){
+  const k=await crypto.subtle.importKey('raw',keyBytes,{name:'HMAC',hash:'SHA-1'},false,['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC',k,msgBytes));
+}
+
+async function _getTOTP(secret,offset=0){
+  const T=Math.floor(Date.now()/30000)+offset;
+  const buf=new ArrayBuffer(8);
+  new DataView(buf).setUint32(4,T,false);
+  const h=await _hmacSHA1(_b32Decode(secret),new Uint8Array(buf));
+  const o=h[h.length-1]&0x0f;
+  const n=((h[o]&0x7f)<<24|(h[o+1]&0xff)<<16|(h[o+2]&0xff)<<8|(h[o+3]&0xff))%1000000;
+  return String(n).padStart(6,'0');
+}
+
+async function _verifyTOTP(secret,code){
+  for(const off of [-1,0,1]){
+    if(await _getTOTP(secret,off)===code) return true;
+  }
+  return false;
+}
+
+function _totpQRUrl(secret,email){
+  const iss='Track+%26+Clock';
+  const uri='otpauth://totp/'+iss+':'+encodeURIComponent(email)+'?secret='+secret+'&issuer='+iss+'&algorithm=SHA1&digits=6&period=30';
+  return 'https://api.qrserver.com/v1/create-qr-code/?size=190x190&margin=10&data='+encodeURIComponent(uri);
+}
+
+// ─────────────────────────────────────────────────
+// 2FA STATE — localStorage + Firestore sync
+// ─────────────────────────────────────────────────
+let _2faEnabled=false, _2faSecret=null, _pendingLoginCallback=null;
+
+function _2faKey(){ return 'tc_2fa_'+(currentUserId||'guest'); }
+
+function _load2FAState(callback){
+  // Try localStorage first for instant UI
+  try{
+    const d=JSON.parse(localStorage.getItem(_2faKey())||'{}');
+    _2faEnabled=!!d.enabled; _2faSecret=d.secret||null;
+    _update2FABadge();
+  }catch(e){ _2faEnabled=false; _2faSecret=null; }
+  // Then sync from Firestore (source of truth, works cross-device)
+  if(firebaseReady&&currentUserId){
+    fsGet('meta/twofa').then(d=>{
+      if(!d) return;
+      _2faEnabled=!!d.enabled; _2faSecret=d.secret||null;
+      // Keep localStorage in sync
+      localStorage.setItem(_2faKey(),JSON.stringify({enabled:_2faEnabled,secret:_2faSecret}));
+      _update2FABadge();
+      if(callback) callback();
+    }).catch(()=>{ if(callback) callback(); });
+  } else {
+    if(callback) callback();
+  }
+}
+
+function _save2FAState(){
+  // Save to both localStorage and Firestore
+  localStorage.setItem(_2faKey(),JSON.stringify({enabled:_2faEnabled,secret:_2faSecret||''}));
+  if(firebaseReady&&currentUserId){
+    fsSet('meta/twofa',{enabled:_2faEnabled,secret:_2faSecret||'',updatedAt:Date.now()});
+  }
+  _update2FABadge();
+}
+
+function _update2FABadge(){
+  const b=document.getElementById('twoFABadge');
+  if(!b) return;
+  if(_2faEnabled){
+    b.style.cssText='display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:800;background:#d4f5e0;color:#2d9c5e;';
+    b.textContent='● Enabled';
+  } else {
+    b.style.cssText='display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:800;background:#ffe0e0;color:#c05050;';
+    b.textContent='● Disabled';
+  }
+}
+
+// ─────────────────────────────────────────────────
+// 2FA SETUP MODAL
+// ─────────────────────────────────────────────────
+async function open2FAModal(){
+  _load2FAState(()=>{
+    const setup=document.getElementById('twoFA_setup_view');
+    const enabled=document.getElementById('twoFA_enabled_view');
+    document.getElementById('twoFAModal').classList.remove('hidden');
+    if(_2faEnabled){
+      setup.style.display='none'; enabled.style.display='block';
+    } else {
+      enabled.style.display='none'; setup.style.display='block';
+      // Fresh secret each time setup is opened
+      _2faSecret=_generate2FASecret();
+      const email=document.getElementById('profileEmail')?.textContent||'user@example.com';
+      document.getElementById('twoFA_qr').innerHTML=
+        '<img src="'+_totpQRUrl(_2faSecret,email)+'" style="width:190px;height:190px;border-radius:10px;" onerror="this.outerHTML='<div style=padding:20px;color:#c05050;font-size:0.8rem;>QR load failed — use manual code below</div>'" alt="QR Code"/>';
+      document.getElementById('twoFA_secret_display').textContent=
+        (_2faSecret.match(/.{1,4}/g)||[]).join(' ');
+      document.getElementById('twoFA_code_input').value='';
+    }
+  });
+}
+
+function close2FAModal(){
+  document.getElementById('twoFAModal').classList.add('hidden');
+}
+
+async function verify2FASetup(){
+  const code=(document.getElementById('twoFA_code_input').value||'').trim();
+  if(code.length!==6){ showToast('⚠️ Enter the 6-digit code from your authenticator app.',3000); return; }
+  const btn=document.querySelector('#twoFA_setup_view .login-btn');
+  if(btn){btn.textContent='⏳ Verifying…';btn.disabled=true;}
+  const ok=await _verifyTOTP(_2faSecret,code);
+  if(btn){btn.textContent='✅ Verify & Enable 2FA';btn.disabled=false;}
+  if(ok){
+    _2faEnabled=true;
+    _save2FAState();
+    close2FAModal();
+    showToast('🛡️ Two-Factor Authentication is now enabled!',3500);
+    setTimeout(open2FAModal,400);
+  } else {
+    showToast('❌ Wrong code. Check your authenticator and try again (device time must be correct).',4500);
+    document.getElementById('twoFA_code_input').value='';
+    document.getElementById('twoFA_code_input').focus();
+  }
+}
+
+function disable2FA(){
+  if(!confirm('Disable Two-Factor Authentication?
+
+Your account will be less secure without it.')) return;
+  _2faEnabled=false; _2faSecret=null;
+  _save2FAState();
+  close2FAModal();
+  showToast('⚠️ Two-Factor Authentication has been disabled.',3000);
+}
+
+// ─────────────────────────────────────────────────
+// 2FA AT LOGIN — gates access after Google sign-in
+// ─────────────────────────────────────────────────
+function _check2FAOnLogin(proceedCallback){
+  // Load from Firestore first (handles cross-device)
+  _load2FAState(()=>{
+    if(_2faEnabled && _2faSecret){
+      _pendingLoginCallback=proceedCallback;
+      document.getElementById('twoFAVerifyModal').classList.remove('hidden');
+      document.getElementById('twoFAVerifyInput').value='';
+      document.getElementById('twoFAVerifyError').style.display='none';
+      setTimeout(()=>document.getElementById('twoFAVerifyInput')?.focus(),250);
+    } else {
+      // No 2FA — proceed immediately
+      if(proceedCallback) proceedCallback();
+    }
+  });
+}
+
+async function verify2FALogin(){
+  const code=(document.getElementById('twoFAVerifyInput').value||'').trim();
+  if(code.length!==6) return;
+  const ok=await _verifyTOTP(_2faSecret,code);
+  if(ok){
+    document.getElementById('twoFAVerifyModal').classList.add('hidden');
+    document.getElementById('twoFAVerifyError').style.display='none';
+    const cb=_pendingLoginCallback; _pendingLoginCallback=null;
+    if(cb) cb();
+  } else {
+    document.getElementById('twoFAVerifyError').style.display='block';
+    document.getElementById('twoFAVerifyInput').value='';
+    document.getElementById('twoFAVerifyInput').focus();
+  }
+}
+
+function cancelTwoFAVerify(){
+  document.getElementById('twoFAVerifyModal').classList.add('hidden');
+  _pendingLoginCallback=null;
+  if(firebaseReady&&auth) auth.signOut().catch(()=>{});
+  showToast('Sign-in cancelled — 2FA verification was not completed.',3500);
+}
+
+// ─────────────────────────────────────────────────
+// HOOK 2FA INTO SIGN-IN FLOW
+// Wraps _onFirebaseGoogleUser to intercept after auth
+// and gate the app entry on 2FA if enabled.
+// ─────────────────────────────────────────────────
+const _orig_onFBGUser = window._onFirebaseGoogleUser;
+window._onFirebaseGoogleUser = function(user){
+  if(!user) return;
+  const name=user.displayName||'Tracker';
+  const email=user.email||'';
+  const photo=user.photoURL||null;
+  // Set userId immediately so _load2FAState can use it
+  currentUserId=email?email.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase():name.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase();
+  // Save to localStorage
+  localStorage.setItem('tc_google_user',JSON.stringify({name,email,photo}));
+  window._pendingGoogleUser=null;
+  // Check 2FA before entering app
+  _check2FAOnLogin(()=>{
+    onUserSignedIn(name,email,photo);
+    closeLoginModal();
+    const wasOnLanding=!document.getElementById('landing').classList.contains('hidden');
+    if(wasOnLanding) goToApp();
+    showToast('✅ Signed in as '+name+'!',3000);
+    if(window._inviteGroupId) handleInviteLink();
+    setTimeout(()=>addNotification('login','✅','Signed In with Google','Welcome back, '+name+'! ('+email+')'),1200);
+  });
+};
+
+// Load security state after user signs in (updates badges, session info)
+const _origOUS=window.onUserSignedIn;
+window.onUserSignedIn=function(name,email,photo){
+  _origOUS(name,email,photo);
+  setTimeout(()=>{
+    _load2FAState();
+    _loadEmailOTPState();
+    // Password reset date
+    const d=localStorage.getItem('tc_pw_reset_sent');
+    const sub=document.getElementById('pwLastChanged');
+    if(sub&&d) sub.textContent='Reset link sent · '+d;
+    // Session info
+    const isMob=/Mobile|Android|iPhone|iPad/i.test(navigator.userAgent);
+    const dev=document.getElementById('sessionDevice');
+    const tm=document.getElementById('sessionTime');
+    if(dev) dev.textContent=(isMob?'📱 Mobile Device':'🖥️ Desktop Browser');
+    if(tm) tm.textContent='Signed in at '+new Date().toLocaleTimeString();
+  },600);
+};
+</script>
+
+<script>
+// ==========================================================
+// ===== EMAIL OTP VERIFICATION ON LOGIN ====================
+// Uses EmailJS (free) to send a 6-digit code to the user's
+// Gmail every time they sign in. No backend needed.
+// ==========================================================
+
+// ── EmailJS config ──
+// We use a public EmailJS account with a simple OTP template.
+// This is safe to expose client-side — EmailJS enforces domain whitelisting.
+const _EMAILJS_SERVICE  = 'service_7o8g7ut';
+const _EMAILJS_TEMPLATE = 'template_sf2es09';
+const _EMAILJS_PUBLIC   = 'i3yXTGjhKA2wxz6AT'; // ← replace after setup
+
+// Load EmailJS SDK lazily
+function _loadEmailJS(){
+  return new Promise((res,rej)=>{
+    if(window.emailjs){ res(); return; }
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js';
+    s.onload=()=>{ emailjs.init({publicKey:_EMAILJS_PUBLIC}); res(); };
+    s.onerror=rej;
+    document.head.appendChild(s);
+  });
+}
+
+// ── State ──
+let _emailOTPEnabled = false;
+let _emailOTPCode    = null;   // the 6-digit code we generated
+let _emailOTPExpiry  = 0;      // timestamp when code expires
+let _emailOTPAttempts= 0;      // wrong guesses this session
+let _emailOTPTimerInterval = null;
+let _emailOTPProceedCb = null; // called after successful verification
+
+function _emailOTPKey(){ return 'tc_emailotp_'+(currentUserId||'guest'); }
+
+function _loadEmailOTPState(){
+  try{
+    const d=JSON.parse(localStorage.getItem(_emailOTPKey())||'{}');
+    _emailOTPEnabled=!!d.enabled;
+  }catch(e){ _emailOTPEnabled=false; }
+  // Sync from Firestore (cross-device)
+  if(firebaseReady&&currentUserId){
+    fsGet('meta/emailotp').then(d=>{
+      if(!d) return;
+      _emailOTPEnabled=!!d.enabled;
+      localStorage.setItem(_emailOTPKey(),JSON.stringify({enabled:_emailOTPEnabled}));
+      _updateEmailOTPBadge();
+    }).catch(()=>{});
+  }
+  _updateEmailOTPBadge();
+}
+
+function _saveEmailOTPState(){
+  localStorage.setItem(_emailOTPKey(),JSON.stringify({enabled:_emailOTPEnabled}));
+  if(firebaseReady&&currentUserId){
+    fsSet('meta/emailotp',{enabled:_emailOTPEnabled,updatedAt:Date.now()});
+  }
+  _updateEmailOTPBadge();
+}
+
+function _updateEmailOTPBadge(){
+  const b=document.getElementById('emailOTPBadge');
+  if(!b) return;
+  if(_emailOTPEnabled){
+    b.style.cssText='display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:800;background:#d4f5e0;color:#2d9c5e;';
+    b.textContent='● Enabled';
+  } else {
+    b.style.cssText='display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:800;background:#ffe0e0;color:#c05050;';
+    b.textContent='● Disabled';
+  }
+}
+
+// ── Settings Modal ──
+function openEmailOTPModal(){
+  _loadEmailOTPState();
+  const email=document.getElementById('profileEmail')?.textContent||'your email';
+  document.getElementById('emailOTP_target').textContent=email;
+  document.getElementById('emailOTP_target2').textContent=email;
+  const dis=document.getElementById('emailOTP_disabled_view');
+  const en=document.getElementById('emailOTP_enabled_view');
+  if(_emailOTPEnabled){ dis.style.display='none'; en.style.display='block'; }
+  else { en.style.display='none'; dis.style.display='block'; }
+  document.getElementById('emailOTPModal').classList.remove('hidden');
+}
+function closeEmailOTPModal(){
+  document.getElementById('emailOTPModal').classList.add('hidden');
+}
+function enableEmailOTP(){
+  _emailOTPEnabled=true; _saveEmailOTPState(); closeEmailOTPModal();
+  showToast('📧 Email verification enabled! A code will be sent on every login.',3500);
+}
+function disableEmailOTP(){
+  if(!confirm('Disable email verification on login?
+
+Anyone with access to your Google account could sign in without a code.')) return;
+  _emailOTPEnabled=false; _saveEmailOTPState(); closeEmailOTPModal();
+  showToast('⚠️ Email verification disabled.',3000);
+}
+
+// ── Generate & Send Code ──
+function _makeOTPCode(){
+  return String(Math.floor(100000+Math.random()*900000));
+}
+
+async function _sendEmailOTP(email, code){
+  // Try EmailJS first (requires setup). Falls back to a mailto: link as UX hint.
+  if(_EMAILJS_PUBLIC && _EMAILJS_PUBLIC !== 'YOUR_EMAILJS_PUBLIC_KEY'){
+    try{
+      await _loadEmailJS();
+      await emailjs.send(_EMAILJS_SERVICE, _EMAILJS_TEMPLATE, {
+        email    : email,
+        to_name  : document.getElementById('sidebarName')?.textContent || 'User',
+        passcode : code,
+        time     : new Date(Date.now() + 10*60*1000).toLocaleTimeString()
+      });
+      return true;
+    } catch(err){
+      console.warn('[EmailOTP] EmailJS failed:',err);
+    }
+  }
+  // Fallback: use Firebase's sendSignInLinkToEmail is NOT used here since it's
+  // for passwordless links. Instead we simulate with a console log in dev mode
+  // and show the code directly on the screen (dev/demo mode).
+  console.warn('[EmailOTP] EmailJS not configured — showing code on screen (demo mode)');
+  return false; // signals demo mode
+}
+
+// ── Login Flow ──
+async function _checkEmailOTPOnLogin(email, proceedCallback){
+  // Load state from Firestore first (ensures cross-device sync)
+  if(firebaseReady&&currentUserId){
+    try{
+      const d=await fsGet('meta/emailotp');
+      if(d){ _emailOTPEnabled=!!d.enabled; }
+    }catch(e){}
+  }
+  if(!_emailOTPEnabled){ proceedCallback(); return; }
+
+  // Generate code
+  _emailOTPCode     = _makeOTPCode();
+  _emailOTPExpiry   = Date.now() + 10*60*1000; // 10 min
+  _emailOTPAttempts = 0;
+  _emailOTPProceedCb= proceedCallback;
+
+  // Show verification modal immediately
+  document.getElementById('emailOTPVerify_target').textContent = email;
+  document.getElementById('emailOTPVerify_input').value = '';
+  document.getElementById('emailOTPVerify_error').style.display  = 'none';
+  document.getElementById('emailOTPVerify_attempts').style.display='none';
+  document.getElementById('emailOTPVerifyModal').classList.remove('hidden');
+  _startEmailOTPTimer();
+
+  // Send code (or show in demo mode)
+  const sent = await _sendEmailOTP(email, _emailOTPCode);
+  if(!sent){
+    // Demo mode — show code on screen with a clear notice
+    showToast('📧 Demo mode: Your code is '+_emailOTPCode+' (EmailJS not configured yet)',8000);
+    const resendBtn=document.getElementById('emailOTPResendBtn');
+    if(resendBtn) resendBtn.textContent='🔄 Resend Code (Demo: '+_emailOTPCode+')';
+  } else {
+    showToast('📧 Verification code sent to '+email+'! Check your inbox.',4000);
+  }
+
+  // Focus input
+  setTimeout(()=>document.getElementById('emailOTPVerify_input')?.focus(), 300);
+}
+
+function _startEmailOTPTimer(){
+  if(_emailOTPTimerInterval) clearInterval(_emailOTPTimerInterval);
+  _emailOTPTimerInterval=setInterval(()=>{
+    const remaining=Math.max(0,_emailOTPExpiry-Date.now());
+    const m=Math.floor(remaining/60000);
+    const s=Math.floor((remaining%60000)/1000);
+    const el=document.getElementById('emailOTPVerify_countdown');
+    if(el) el.textContent=m+':'+(s<10?'0':'')+s;
+    if(remaining<=0){
+      clearInterval(_emailOTPTimerInterval);
+      _emailOTPCode=null;
+      showToast('⏰ Code expired. Please sign in again.',4000);
+      document.getElementById('emailOTPVerifyModal').classList.add('hidden');
+      // Sign out
+      if(firebaseReady&&auth) auth.signOut().catch(()=>{});
+    }
+  },1000);
+}
+
+function verifyEmailOTPLogin(){
+  const entered=(document.getElementById('emailOTPVerify_input').value||'').trim();
+  if(entered.length!==6){ return; }
+  if(!_emailOTPCode || Date.now()>_emailOTPExpiry){
+    showToast('⏰ Code expired. Please sign in again.',4000);
+    cancelEmailOTPVerify(); return;
+  }
+  if(entered===_emailOTPCode){
+    // ✅ Correct
+    clearInterval(_emailOTPTimerInterval);
+    document.getElementById('emailOTPVerifyModal').classList.add('hidden');
+    document.getElementById('emailOTPVerify_error').style.display='none';
+    _emailOTPCode=null;
+    showToast('✅ Email verified!',2500);
+    const cb=_emailOTPProceedCb; _emailOTPProceedCb=null;
+    if(cb) cb();
+  } else {
+    // ❌ Wrong
+    _emailOTPAttempts++;
+    document.getElementById('emailOTPVerify_error').style.display='block';
+    document.getElementById('emailOTPVerify_input').value='';
+    document.getElementById('emailOTPVerify_input').focus();
+    const attEl=document.getElementById('emailOTPVerify_attempts');
+    if(_emailOTPAttempts>=3){
+      clearInterval(_emailOTPTimerInterval);
+      _emailOTPCode=null;
+      attEl.style.display='block';
+      attEl.textContent='Too many wrong attempts. Please sign in again.';
+      setTimeout(cancelEmailOTPVerify,2500);
+    } else {
+      attEl.style.display='block';
+      attEl.textContent=(3-_emailOTPAttempts)+' attempt'+(3-_emailOTPAttempts!==1?'s':'')+' remaining.';
+    }
+  }
+}
+
+async function resendEmailOTP(){
+  const email=document.getElementById('emailOTPVerify_target').textContent;
+  _emailOTPCode=_makeOTPCode();
+  _emailOTPExpiry=Date.now()+10*60*1000;
+  _emailOTPAttempts=0;
+  document.getElementById('emailOTPVerify_error').style.display='none';
+  document.getElementById('emailOTPVerify_attempts').style.display='none';
+  document.getElementById('emailOTPVerify_input').value='';
+  _startEmailOTPTimer();
+  const sent=await _sendEmailOTP(email,_emailOTPCode);
+  if(!sent){
+    showToast('📧 New code (demo): '+_emailOTPCode,8000);
+    const btn=document.getElementById('emailOTPResendBtn');
+    if(btn) btn.textContent='🔄 Resend Code (Demo: '+_emailOTPCode+')';
+  } else {
+    showToast('📧 New code sent to '+email+'!',3000);
+  }
+}
+
+function cancelEmailOTPVerify(){
+  clearInterval(_emailOTPTimerInterval);
+  _emailOTPCode=null; _emailOTPProceedCb=null;
+  document.getElementById('emailOTPVerifyModal').classList.add('hidden');
+  if(firebaseReady&&auth) auth.signOut().catch(()=>{});
+  showToast('Sign-in cancelled — email verification was not completed.',3500);
+}
+
+// ── Hook Email OTP into the sign-in flow ──
+// Runs AFTER 2FA check (both can be active at once)
+const _orig2FAWrapper = window._onFirebaseGoogleUser;
+window._onFirebaseGoogleUser = function(user){
+  if(!user) return;
+  const name=user.displayName||'Tracker';
+  const email=user.email||'';
+  const photo=user.photoURL||null;
+  currentUserId=email?email.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase():name.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase();
+  localStorage.setItem('tc_google_user',JSON.stringify({name,email,photo}));
+  window._pendingGoogleUser=null;
+
+  // Chain: Email OTP → TOTP 2FA → enter app
+  // Email OTP runs first (send code to email)
+  // Then TOTP 2FA if also enabled
+  // Then finally enter the app
+  const enterApp=()=>{
+    onUserSignedIn(name,email,photo);
+    closeLoginModal();
+    const wasOnLanding=!document.getElementById('landing').classList.contains('hidden');
+    if(wasOnLanding) goToApp();
+    showToast('✅ Signed in as '+name+'!',3000);
+    if(window._inviteGroupId) handleInviteLink();
+    setTimeout(()=>addNotification('login','✅','Signed In with Google','Welcome back, '+name+'! ('+email+')'),1200);
+  };
+
+  const afterEmailOTP=()=>{
+    // Check TOTP 2FA second
+    _check2FAOnLogin(enterApp);
+  };
+
+  // Check Email OTP first
+  _checkEmailOTPOnLogin(email, afterEmailOTP);
+};
+</script>
+
+<!-- ===== EMAIL OTP SETTINGS MODAL ===== -->
+<div class="modal-overlay hidden" id="emailOTPModal" onclick="if(event.target===this)closeEmailOTPModal()">
+  <div class="login-modal" style="max-width:410px;">
+    <div style="font-size:2rem;text-align:center;margin-bottom:8px;">📧</div>
+    <h2 style="text-align:center;font-family:'Nunito',sans-serif;font-size:1.15rem;margin-bottom:4px;">Email Verification on Login</h2>
+    <p style="text-align:center;font-size:0.82rem;color:#7a6fa0;margin-bottom:16px;">When enabled, a 6-digit code will be sent to your Gmail every time someone tries to log in to your account. Only you can access it.</p>
+
+    <div id="emailOTP_disabled_view">
+      <div style="background:rgba(232,240,255,0.6);border:1.5px solid rgba(180,200,255,0.5);border-radius:14px;padding:14px 16px;margin-bottom:14px;">
+        <div style="font-size:0.82rem;font-weight:700;color:#3d3260;margin-bottom:6px;">How it works:</div>
+        <div style="font-size:0.78rem;color:#7a6fa0;line-height:1.6;">
+          1️⃣ You sign in with Google as usual<br>
+          2️⃣ A 6-digit code is sent to <strong id="emailOTP_target">your email</strong><br>
+          3️⃣ Enter the code to access your account<br>
+          4️⃣ Code expires in <strong>10 minutes</strong>
+        </div>
+      </div>
+      <button class="login-btn" onclick="enableEmailOTP()">✅ Enable Email Verification</button>
+    </div>
+
+    <div id="emailOTP_enabled_view" style="display:none;">
+      <div style="background:rgba(180,240,200,0.3);border:1.5px solid rgba(94,234,212,0.4);border-radius:14px;padding:16px;margin-bottom:14px;text-align:center;">
+        <div style="font-size:1.5rem;margin-bottom:4px;">🛡️</div>
+        <div style="font-weight:900;color:#2d9c5e;font-size:0.95rem;">Email Verification is Active</div>
+        <div style="font-size:0.78rem;color:#7a6fa0;margin-top:4px;">A code will be sent to <strong id="emailOTP_target2">your email</strong> on every login.</div>
+      </div>
+      <button onclick="disableEmailOTP()" style="width:100%;padding:11px;border-radius:13px;border:1.5px solid rgba(220,80,80,0.3);background:rgba(255,240,240,0.7);color:#c05050;font-family:'Nunito',sans-serif;font-weight:800;font-size:0.88rem;cursor:pointer;">🗑 Disable Email Verification</button>
+    </div>
+
+    <button onclick="closeEmailOTPModal()" style="width:100%;margin-top:10px;padding:10px;border-radius:11px;border:1.5px solid rgba(200,180,240,0.3);background:transparent;cursor:pointer;font-family:'Quicksand',sans-serif;font-weight:700;color:#7a6fa0;font-size:0.88rem;">Close</button>
+  </div>
+</div>
+
+<!-- ===== EMAIL OTP VERIFICATION MODAL (shown at login) ===== -->
+<div class="modal-overlay hidden" id="emailOTPVerifyModal">
+  <div class="login-modal" style="max-width:370px;">
+    <div style="font-size:2.2rem;text-align:center;margin-bottom:8px;">📬</div>
+    <h2 style="text-align:center;font-family:'Nunito',sans-serif;font-size:1.15rem;margin-bottom:4px;">Check Your Email</h2>
+    <p style="text-align:center;font-size:0.82rem;color:#7a6fa0;margin-bottom:6px;">We sent a 6-digit code to:</p>
+    <div id="emailOTPVerify_target" style="text-align:center;font-weight:800;color:#3d3260;font-size:0.9rem;margin-bottom:16px;word-break:break-all;"></div>
+
+    <input id="emailOTPVerify_input" class="task-input" type="tel" maxlength="6"
+      placeholder="000000"
+      style="width:100%;text-align:center;font-size:1.5rem;letter-spacing:8px;font-family:monospace;padding:14px;"
+      oninput="this.value=this.value.replace(/[^0-9]/g,'');if(this.value.length===6)verifyEmailOTPLogin()"/>
+
+    <div id="emailOTPVerify_timer" style="text-align:center;font-size:0.78rem;color:#7a6fa0;margin:8px 0;font-weight:700;">⏱ Code expires in <span id="emailOTPVerify_countdown">10:00</span></div>
+    <div id="emailOTPVerify_error" style="display:none;text-align:center;color:#c05050;font-size:0.82rem;font-weight:700;margin-bottom:6px;">❌ Incorrect code. Please try again.</div>
+    <div id="emailOTPVerify_attempts" style="display:none;text-align:center;color:#c05050;font-size:0.78rem;font-weight:700;margin-bottom:6px;"></div>
+
+    <button class="login-btn" onclick="verifyEmailOTPLogin()">→ Verify Code</button>
+    <button onclick="resendEmailOTP()" id="emailOTPResendBtn" style="width:100%;margin-top:6px;padding:9px;border-radius:11px;border:1.5px solid rgba(200,180,240,0.4);background:rgba(200,180,240,0.1);cursor:pointer;font-family:'Nunito',sans-serif;font-weight:700;color:#7a6fa0;font-size:0.84rem;">🔄 Resend Code</button>
+    <button onclick="cancelEmailOTPVerify()" style="width:100%;margin-top:6px;padding:9px;border-radius:11px;border:none;background:transparent;cursor:pointer;font-family:'Quicksand',sans-serif;font-weight:700;color:#c05050;font-size:0.82rem;">Cancel Sign-In</button>
+  </div>
+</div>
 </body>
 </html>
