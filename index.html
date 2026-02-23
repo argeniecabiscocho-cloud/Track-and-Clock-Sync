@@ -8081,15 +8081,32 @@ function _updateEmailOTPBadge(){
 
 // ── Settings Modal ──
 function openEmailOTPModal(){
-  _loadEmailOTPState();
-  const email=document.getElementById('profileEmail')?.textContent||'your email';
-  document.getElementById('emailOTP_target').textContent=email;
-  document.getElementById('emailOTP_target2').textContent=email;
-  const dis=document.getElementById('emailOTP_disabled_view');
-  const en=document.getElementById('emailOTP_enabled_view');
-  if(_emailOTPEnabled){ dis.style.display='none'; en.style.display='block'; }
-  else { en.style.display='none'; dis.style.display='block'; }
-  document.getElementById('emailOTPModal').classList.remove('hidden');
+  try{
+    // Load state from localStorage only (safe, no async)
+    try{
+      const k='tc_emailotp_'+(currentUserId||'guest');
+      const d=JSON.parse(localStorage.getItem(k)||'{}');
+      _emailOTPEnabled=!!d.enabled;
+    }catch(e){ _emailOTPEnabled=false; }
+    _updateEmailOTPBadge();
+
+    const email=(document.getElementById('profileEmail')?.textContent||'').trim()||'your email';
+    const t1=document.getElementById('emailOTP_target');
+    const t2=document.getElementById('emailOTP_target2');
+    if(t1) t1.textContent=email;
+    if(t2) t2.textContent=email;
+
+    const dis=document.getElementById('emailOTP_disabled_view');
+    const en=document.getElementById('emailOTP_enabled_view');
+    if(dis && en){
+      if(_emailOTPEnabled){ dis.style.display='none'; en.style.display='block'; }
+      else { en.style.display='none'; dis.style.display='block'; }
+    }
+    document.getElementById('emailOTPModal').classList.remove('hidden');
+  }catch(err){
+    console.error('[EmailOTP] openEmailOTPModal error:',err);
+    showToast('❌ Could not open Email Verification settings: '+err.message,4000);
+  }
 }
 function closeEmailOTPModal(){
   document.getElementById('emailOTPModal').classList.add('hidden');
