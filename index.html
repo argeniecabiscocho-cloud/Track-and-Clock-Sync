@@ -2655,6 +2655,11 @@ function _initFirebase(){
     setTimeout(_initFirebase, 200);
     return;
   }
+  if(typeof firebase.auth !== 'function' || typeof firebase.firestore !== 'function'){
+    console.warn('[Firebase] Auth/Firestore compat SDK not yet loaded, retrying...');
+    setTimeout(_initFirebase, 300);
+    return;
+  }
   try{
     if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
     auth=firebase.auth();
@@ -7873,7 +7878,7 @@ async function open2FAModal(){
       _2faSecret=_generate2FASecret();
       const email=document.getElementById('profileEmail')?.textContent||'user@example.com';
       document.getElementById('twoFA_qr').innerHTML=
-        '<img src="'+_totpQRUrl(_2faSecret,email)+'" style="width:190px;height:190px;border-radius:10px;" onerror="this.outerHTML='<div style=padding:20px;color:#c05050;font-size:0.8rem;>QR load failed — use manual code below</div>'" alt="QR Code"/>';
+        '<img src="'+_totpQRUrl(_2faSecret,email)+'" style="width:190px;height:190px;border-radius:10px;" onerror="this.outerHTML=\'<div style=&quot;padding:20px;color:#c05050;font-size:0.8rem;&quot;>QR load failed \u2014 use manual code below</div>\'" alt="QR Code"/>';
       document.getElementById('twoFA_secret_display').textContent=
         (_2faSecret.match(/.{1,4}/g)||[]).join(' ');
       document.getElementById('twoFA_code_input').value='';
@@ -7906,9 +7911,7 @@ async function verify2FASetup(){
 }
 
 function disable2FA(){
-  if(!confirm('Disable Two-Factor Authentication?
-
-Your account will be less secure without it.')) return;
+  if(!confirm('Disable Two-Factor Authentication?\n\nYour account will be less secure without it.')) return;
   _2faEnabled=false; _2faSecret=null;
   _save2FAState();
   close2FAModal();
@@ -8116,9 +8119,7 @@ function enableEmailOTP(){
   showToast('📧 Email verification enabled! A code will be sent on every login.',3500);
 }
 function disableEmailOTP(){
-  if(!confirm('Disable email verification on login?
-
-Anyone with access to your Google account could sign in without a code.')) return;
+  if(!confirm('Disable email verification on login?\n\nAnyone with access to your Google account could sign in without a code.')) return;
   _emailOTPEnabled=false; _saveEmailOTPState(); closeEmailOTPModal();
   showToast('⚠️ Email verification disabled.',3000);
 }
